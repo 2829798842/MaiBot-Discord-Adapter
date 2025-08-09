@@ -1,0 +1,6 @@
+discord.py>=2.3.0
+maim_message
+loguru>=0.7.0
+toml
+aiofiles
+asyncio
