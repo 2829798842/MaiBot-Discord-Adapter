@@ -105,9 +105,17 @@ class DiscordMessageHandler:
             message_segments = []
             content_formats = []
             
-            # 处理文本内容（包含emoji检测）
+            # 处理@提及
+            mentions_info = await self._process_mentions(message)
+            if mentions_info:
+                message_segments.append(Seg(type="mention", data=mentions_info))
+                if "mention" not in content_formats:
+                    content_formats.append("mention")
+                logger.debug(f"处理@提及: {len(mentions_info.get('users', []))}个用户, {len(mentions_info.get('roles', []))}个角色")
+            
+            # 处理文本内容（包含emoji检测和提及处理）
             if message.content:
-                processed_content = await self._process_text_with_emojis(message.content)
+                processed_content = await self._process_text_with_emojis(message.content, message)
                 message_segments.extend(processed_content)
                 
                 # 更新content_formats
@@ -170,8 +178,19 @@ class DiscordMessageHandler:
             
             # 处理回复消息
             if message.reference and message.reference.message_id:
-                message_segments.append(Seg(type="reply", data=str(message.reference.message_id)))
-                logger.debug(f"处理回复消息: {message.reference.message_id}")
+                
+                reply_message_id = str(message.reference.message_id)
+                
+                # 获取回复上下文用于显示（可选）
+                reply_context = await self._get_reply_context(message)
+                if reply_context:
+                    # 在消息开头插入回复上下文文本
+                    message_segments.insert(0, Seg(type="text", data=reply_context))
+                
+                message_segments.append(Seg(type="reply", data=reply_message_id))
+                if "reply" not in content_formats:
+                    content_formats.append("reply")
+                logger.debug(f"处理回复消息: {reply_message_id}")
             
             # 如果没有任何内容，跳过该消息
             if not message_segments:
@@ -210,23 +229,116 @@ class DiscordMessageHandler:
             logger.error(f"转换 Discord 消息时发生错误: {e}")
             return None
     
-    async def _process_text_with_emojis(self, text: str) -> List[Seg]:
-        """处理包含emoji的文本内容
+    async def _process_mentions(self, message: discord.Message) -> dict | None:
+        """处理消息中的@提及信息
+        
+        Args:
+            message: Discord消息对象
+            
+        Returns:
+            dict | None: 包含提及信息的字典，没有提及时返回None
+        """
+        mentions_data = {}
+        
+        # 处理用户提及
+        if message.mentions:
+            users = []
+            for user in message.mentions:
+                user_data = {
+                    "user_id": str(user.id),
+                    "username": user.name,
+                    "display_name": user.display_name,
+                    "is_bot": user.bot
+                }
+                users.append(user_data)
+            mentions_data["users"] = users
+            logger.debug(f"检测到用户提及: {len(users)}个用户")
+        
+        # 处理角色提及
+        if message.role_mentions:
+            roles = []
+            for role in message.role_mentions:
+                role_data = {
+                    "role_id": str(role.id),
+                    "role_name": role.name,
+                    "color": str(role.color),
+                    "mentionable": role.mentionable
+                }
+                roles.append(role_data)
+            mentions_data["roles"] = roles
+            logger.debug(f"检测到角色提及: {len(roles)}个角色")
+        
+        # 处理频道提及
+        if hasattr(message, 'channel_mentions') and message.channel_mentions:
+            channels = []
+            for channel in message.channel_mentions:
+                channel_data = {
+                    "channel_id": str(channel.id),
+                    "channel_name": channel.name,
+                    "channel_type": str(channel.type)
+                }
+                channels.append(channel_data)
+            mentions_data["channels"] = channels
+            logger.debug(f"检测到频道提及: {len(channels)}个频道")
+        
+        # 检查是否提及了所有人
+        if "@everyone" in message.content or "@here" in message.content:
+            mentions_data["everyone"] = "@everyone" in message.content
+            mentions_data["here"] = "@here" in message.content
+            logger.debug(f"检测到全体提及: everyone={mentions_data.get('everyone', False)}, here={mentions_data.get('here', False)}")
+        
+        return mentions_data if mentions_data else None
+
+    async def _process_text_with_emojis(self, text: str, message: discord.Message = None) -> List[Seg]:
+        """处理包含emoji和提及的文本内容
         
         Args:
             text: 原始文本内容
+            message: Discord消息对象（用于获取提及信息）
             
         Returns:
             List[Seg]: 处理后的消息段列表
         """
+        # 先处理提及，将<@user_id>替换为用户名
+        processed_text = text
+        if message and message.mentions:
+            for user in message.mentions:
+                # 替换<@!user_id>和<@user_id>格式
+                user_mention_patterns = [f"<@!{user.id}>", f"<@{user.id}>"]
+                for pattern in user_mention_patterns:
+                    if pattern in processed_text:
+                        display_name = getattr(user, 'nick', None) or user.display_name
+                        processed_text = processed_text.replace(pattern, f"@{display_name}")
+                        logger.debug(f"替换用户提及: {pattern} -> @{display_name}")
+        
+        # 处理角色提及
+        if message and message.role_mentions:
+            for role in message.role_mentions:
+                role_pattern = f"<@&{role.id}>"
+                if role_pattern in processed_text:
+                    processed_text = processed_text.replace(role_pattern, f"@{role.name}")
+                    logger.debug(f"替换角色提及: {role_pattern} -> @{role.name}")
+        
+        # 处理频道提及
+        if message and hasattr(message, 'channel_mentions'):
+            for channel in message.channel_mentions:
+                channel_pattern = f"<#{channel.id}>"
+                if channel_pattern in processed_text:
+                    processed_text = processed_text.replace(channel_pattern, f"#{channel.name}")
+                    logger.debug(f"替换频道提及: {channel_pattern} -> #{channel.name}")
+        
+        # 继续处理emoji（使用处理后的文本）
+        return await self._process_emoji_text(processed_text)
+    
+    async def _process_emoji_text(self, text: str) -> List[Seg]:
         # Unicode emoji正则表达式
         unicode_emoji_pattern = re.compile(
             "["
-            "\U0001F600-\U0001F64F"  # emoticons
-            "\U0001F300-\U0001F5FF"  # symbols & pictographs
-            "\U0001F680-\U0001F6FF"  # transport & map
-            "\U0001F1E0-\U0001F1FF"  # flags (iOS)
-            "\U00002702-\U000027B0"  # Dingbats
+            "\U0001F600-\U0001F64F"
+            "\U0001F300-\U0001F5FF"
+            "\U0001F680-\U0001F6FF"
+            "\U0001F1E0-\U0001F1FF"
+            "\U00002702-\U000027B0"
             "\U000024C2-\U0001F251" 
             "]+", 
             flags=re.UNICODE
@@ -282,6 +394,65 @@ class DiscordMessageHandler:
             segments.append(Seg(type="text", data=text))
         
         return segments if segments else [Seg(type="text", data=text)]
+    
+    async def _get_reply_context(self, message: discord.Message) -> str | None:
+        """获取回复上下文信息，格式化为易读文本
+        
+        借鉴QQ适配器的处理方式，将回复信息格式化为类似
+        "[回复<用户名:用户ID>：被回复内容]，说："的格式。
+        
+        Args:
+            message: 包含回复引用的Discord消息对象
+            
+        Returns:
+            str | None: 格式化后的回复上下文文本，获取失败时返回None
+        """
+        try:
+            if not message.reference or not message.reference.message_id:
+                return None
+            
+            # 尝试获取被回复的消息
+            referenced_message = None
+            try:
+                if hasattr(message.reference, 'cached_message') and message.reference.cached_message:
+                    referenced_message = message.reference.cached_message
+                else:
+                    referenced_message = await message.channel.fetch_message(message.reference.message_id)
+            except (discord.NotFound, discord.Forbidden):
+                logger.warning(f"无法获取被回复的消息: {message.reference.message_id}")
+                return f"[回复消息{message.reference.message_id}]，说："
+            except Exception as e:
+                logger.warning(f"获取被回复消息时发生错误: {e}")
+                return f"[回复消息{message.reference.message_id}]，说："
+            
+            if not referenced_message:
+                return f"[回复消息{message.reference.message_id}]，说："
+            
+            # 构建回复上下文
+            author_name = referenced_message.author.display_name
+            author_id = referenced_message.author.id
+            is_bot = referenced_message.author.bot
+            content = referenced_message.content or "[无文本内容]"
+            
+            # 限制内容长度
+            if len(content) > 100:
+                content = content[:100] + "..."
+            
+            # 添加附件信息
+            if referenced_message.attachments:
+                attachment_count = len(referenced_message.attachments)
+                content += f"[包含{attachment_count}个附件]"
+            
+            # 构建格式化文本
+            user_type = "机器人" if is_bot else "用户"
+            reply_text = f"[回复<{user_type}{author_name}:{author_id}>：{content}]，说："
+            
+            logger.debug(f"格式化回复上下文: {reply_text}")
+            return reply_text
+            
+        except Exception as e:
+            logger.error(f"处理回复上下文时发生错误: {e}")
+            return f"[回复消息{message.reference.message_id}]，说："
 
 
 # 创建全局消息处理器实例
