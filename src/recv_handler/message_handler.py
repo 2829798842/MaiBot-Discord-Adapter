@@ -75,13 +75,29 @@ class DiscordMessageHandler:
             logger.debug("开始构造 MaiBot 消息对象")
             
             # 构造用户信息
+            # 获取各种用户名称信息
+            username = message.author.name  # Discord用户名（如: john_doe）
+            display_name = message.author.display_name  # 显示名称（全局昵称或用户名）
+            server_nickname = getattr(message.author, 'nick', None) if hasattr(message.author, 'nick') else None  # 服务器昵称
+            global_name = getattr(message.author, 'global_name', None) if hasattr(message.author, 'global_name') else None  # 全局显示名称
+            
             user_info = UserInfo(
                 platform=global_config.maibot_server.platform_name,
                 user_id=str(message.author.id),
-                user_nickname=message.author.display_name,
-                user_cardname=getattr(message.author, 'nick', None) if hasattr(message.author, 'nick') else None
+                user_nickname=display_name,  # 主要显示名称
+                user_cardname=server_nickname  # 服务器内的昵称
             )
-            logger.debug(f"用户信息: {user_info.user_nickname} (ID: {user_info.user_id})")
+            
+            # 详细记录用户信息
+            logger.debug("用户信息详情:")
+            logger.debug(f"  用户ID: {user_info.user_id}")
+            logger.debug(f"  Discord用户名: {username}")
+            logger.debug(f"  显示名称: {display_name}")
+            if global_name:
+                logger.debug(f"  全局昵称: {global_name}")
+            if server_nickname:
+                logger.debug(f"  服务器昵称: {server_nickname}")
+            logger.debug(f"  是否为机器人: {message.author.bot}")
             
             # 构造群组信息（如果是服务器消息）
             group_info = None
@@ -244,13 +260,23 @@ class DiscordMessageHandler:
         if message.mentions:
             users = []
             for user in message.mentions:
+                # 获取用户的各种名称信息
+                username = user.name  # Discord用户名
+                display_name = user.display_name  # 显示名称
+                global_name = getattr(user, 'global_name', None) if hasattr(user, 'global_name') else None  # 全局昵称
+                server_nick = getattr(user, 'nick', None) if hasattr(user, 'nick') else None  # 服务器昵称
+                
                 user_data = {
                     "user_id": str(user.id),
-                    "username": user.name,
-                    "display_name": user.display_name,
-                    "is_bot": user.bot
+                    "username": username,  # Discord原始用户名
+                    "display_name": display_name,  # 当前显示名称
+                    "global_name": global_name,  # 全局昵称（如果有）
+                    "server_nickname": server_nick,  # 服务器内昵称（如果有）
+                    "is_bot": user.bot,
+                    "discriminator": getattr(user, 'discriminator', None)  # 用户标识符（旧版Discord）
                 }
                 users.append(user_data)
+                logger.debug(f"提及用户详情: {username} (ID: {user.id}, 显示名: {display_name})")
             mentions_data["users"] = users
             logger.debug(f"检测到用户提及: {len(users)}个用户")
         
@@ -307,9 +333,13 @@ class DiscordMessageHandler:
                 user_mention_patterns = [f"<@!{user.id}>", f"<@{user.id}>"]
                 for pattern in user_mention_patterns:
                     if pattern in processed_text:
-                        display_name = getattr(user, 'nick', None) or user.display_name
+                        # 优先使用服务器昵称，然后是全局昵称，最后是显示名称
+                        server_nick = getattr(user, 'nick', None) if hasattr(user, 'nick') else None
+                        global_name = getattr(user, 'global_name', None) if hasattr(user, 'global_name') else None
+                        display_name = server_nick or global_name or user.display_name
+                        
                         processed_text = processed_text.replace(pattern, f"@{display_name}")
-                        logger.debug(f"替换用户提及: {pattern} -> @{display_name}")
+                        logger.debug(f"替换用户提及: {pattern} -> @{display_name} (用户名: {user.name})")
         
         # 处理角色提及
         if message and message.role_mentions:

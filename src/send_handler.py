@@ -147,7 +147,6 @@ class DiscordSendHandler:
                 else:
                     logger.warning(f"找不到频道 {channel_id} 或频道类型不正确")
                     
-                    # 备用方案：尝试从API获取频道
                     try:
                         channel = await discord_client.client.fetch_channel(channel_id)
                         if isinstance(channel, discord.TextChannel):
@@ -178,7 +177,6 @@ class DiscordSendHandler:
                         self._cache_user(user_id, user)
                 if user:
                     logger.debug(f"找到目标用户: {user.display_name} (ID: {user.id})")
-                    # 优化：使用更安全的DM频道获取方式
                     if user.dm_channel:
                         return user.dm_channel
                     else:
@@ -189,7 +187,7 @@ class DiscordSendHandler:
                             return None
                 else:
                     # 如果缓存中没有用户，尝试从API获取
-                    try:
+                    try: 
                         user = await discord_client.client.fetch_user(user_id)
                         logger.debug(f"从API获取到用户: {user.display_name} (ID: {user.id})")
                         self._cache_user(user_id, user)  # 缓存新获取的用户
