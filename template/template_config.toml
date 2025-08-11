@@ -4,13 +4,7 @@ version = "0.0.1" # 版本号
 
 [discord] # Discord Bot 设置
 token = "your_discord_bot_token_"
-
-# Discord 权限意图设置
-[discord.intents]
-messages = true
-guilds = true
-dm_messages = true
-message_content = true
+# proxy_url = "http://127.0.0.1:7890" # 可选：代理服务器地址（如果需要）
 
 [chat]
 # 获取服务器 ID：右键点击服务器名称 -> 复制服务器 ID
@@ -39,3 +33,23 @@ platform_name = "discord_bot_instance_1" # 平台标识符，目前仅作为标�
 [debug]
 level = "INFO" # 日志等级（DEBUG, INFO, WARNING, ERROR, CRITICAL）
 log_file = "logs/discord_adapter.log" # 日志文件路径
+
+# Discord 权限意图设置
+[discord.intents]
+messages = true
+guilds = true
+dm_messages = true
+message_content = true
+
+# Discord 连接重试设置
+[discord.retry]
+max_retries = 3    # 最大重试次数
+retry_delay = 5    # 重试间隔（秒）
+timeout = 30       # 连接超时（秒）
+
+# 网络驱动器设置
+[network]
+driver = "aiohttp"    # 网络驱动器类型（aiohttp 或 websockets）
+ssl_verify = true     # SSL 证书验证
+timeout = 30          # 网络请求超时（秒）
+pool_size = 100       # 连接池大小

@@ -4,6 +4,7 @@
 
 import discord
 import asyncio
+import aiohttp
 import traceback
 from ..logger import logger
 from ..config import global_config, is_user_allowed
@@ -42,7 +43,17 @@ class DiscordClientManager:
         
         logger.debug(f"Discord 权限意图: messages={intents.messages}, guilds={intents.guilds}, dm_messages={intents.dm_messages}, message_content={intents.message_content}")
         
-        self.client = discord.Client(intents=intents)
+        # 记录网络配置信息（用于诊断）
+        network_config = getattr(global_config, 'network', {})
+        logger.debug(f"网络配置: {network_config}")
+        
+        # 设置代理（如果配置了）
+        proxy = getattr(global_config.discord, 'proxy_url', None)
+        if proxy:
+            logger.info(f"使用代理连接Discord: {proxy}")
+            self.client = discord.Client(intents=intents, proxy=proxy)
+        else:
+            self.client = discord.Client(intents=intents)
         
         # 使用装饰器方式注册事件处理器
         @self.client.event
@@ -58,6 +69,34 @@ class DiscordClientManager:
             await self._on_error(event, *args, **kwargs)
         
         logger.debug("Discord 客户端初始化完成")
+    
+    async def _create_connector(self):
+        """创建网络连接器（异步）
+        
+        Returns:
+            aiohttp.BaseConnector: 配置好的连接器
+        """
+        # 获取网络配置
+        network_config = getattr(global_config, 'network', {})
+        driver = network_config.get('driver', 'aiohttp')
+        ssl_verify = network_config.get('ssl_verify', True)
+        timeout = network_config.get('timeout', 30)
+        pool_size = network_config.get('pool_size', 100)
+        
+        logger.debug(f"网络配置: driver={driver}, ssl_verify={ssl_verify}, timeout={timeout}, pool_size={pool_size}")
+        
+        # 创建aiohttp连接器
+        connector = aiohttp.TCPConnector(
+            limit=pool_size,
+            limit_per_host=30,
+            ttl_dns_cache=300,
+            use_dns_cache=True,
+            ssl=ssl_verify,
+            enable_cleanup_closed=True
+        )
+        
+        logger.debug(f"创建 {driver} 连接器成功")
+        return connector
     
     async def _on_ready(self):
         """Discord 客户端就绪事件处理器
@@ -138,12 +177,58 @@ class DiscordClientManager:
         Raises:
             Exception: 当启动失败时抛出异常
         """
-        try:
-            logger.info("正在启动 Discord 客户端...")
-            await self.client.start(global_config.discord.token)
-        except Exception as e:
-            logger.error(f"启动 Discord 客户端失败: {e}")
-            raise
+        # 获取重试配置
+        retry_config = getattr(global_config.discord, 'retry', {})
+        max_retries = retry_config.get('max_retries', 3)
+        retry_delay = retry_config.get('retry_delay', 5)
+        
+        logger.info(f"正在启动 Discord 客户端... (最大重试次数: {max_retries}, 重试间隔: {retry_delay}s)")
+        
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt > 0:
+                    logger.info(f"第 {attempt} 次重试启动 Discord 客户端...")
+                    # 等待重试间隔
+                    await asyncio.sleep(retry_delay)
+                    
+                    # 重新创建客户端（避免连接状态问题）
+                    if self.client and not self.client.is_closed():
+                        await self.client.close()
+                    
+                    self._setup_client()
+                
+                # 启动客户端（这是持续运行的任务）
+                await self.client.start(global_config.discord.token)
+                
+                # 如果到这里说明连接断开了，不为成功启动
+                logger.warning("Discord 客户端连接意外断开")
+                
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"第 {attempt + 1} 次尝试失败: {last_error}")
+                
+                # 记录详细错误信息
+                if "信号灯超时" in str(e) or "timeout" in str(e).lower():
+                    logger.warning("检测到网络超时，可能是网络连接问题或DNS拦截")
+                elif "ssl" in str(e).lower():
+                    logger.warning("检测到SSL错误，可能是证书问题或网络拦截")
+                elif "name resolution" in str(e).lower() or "dns" in str(e).lower():
+                    logger.warning("检测到DNS解析问题，可能是网络拦截或DNS污染")
+                elif "login" in str(e).lower() or "token" in str(e).lower():
+                    logger.error("Token 相关错误，请检查 Discord Bot Token 是否正确")
+                    break  # Token 错误不需要重试
+        
+        # 所有重试都失败了
+        error_msg = f"Discord 客户端启动失败，已重试 {max_retries} 次。最后错误: {last_error}"
+        logger.error(error_msg)
+        logger.error("可能的解决方案:")
+        logger.error("1. 检查网络连接和防火墙设置")
+        logger.error("2. 检查Discord token是否正确")
+        logger.error("3. 尝试使用代理或VPN")
+        logger.error("4. 检查DNS设置（可能被拦截或污染）")
+        logger.error("5. 在配置中设置 proxy_url")
+        raise Exception(error_msg)
     
     async def stop(self):
         """停止 Discord 客户端"""

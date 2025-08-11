@@ -1,7 +1,9 @@
 # MaiBot 与 Discord 的 Adapter
 
 运行方式：独立/放在MaiBot本体作为插件
-
+<div align="center">
+[![Discord](https://img.shields.io/badge/Discord-MaiBot-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/ue4xJw7s)
+</div>
 ## 使用说明
 
 ### 一、获取必要的文件
@@ -202,8 +204,12 @@ python .\main.py
 
 ### 目前已知bug
 
-1.**严重？** 在未知情况下会出现启动适配器后无法连接discord的情况(初步判定为网络不稳定导致)
+1.**严重？** 在未知情况下会出现启动适配器后无法连接discord的情况
+具体表现为在discord还能正常连接的情况下，仍会连接失败
+目前建议您在使用时打开Tun模式
+
 2.由于discord的emoji的格式问题，麦麦接受到消息后会认为这是一段文字而非一个emoji，因此建议配合使用discord_emoji_enhance_plugin使用
+
 3.关于头像发送时机未知，已知仅此discord_bot自身头像
 
 ## 特别鸣谢
