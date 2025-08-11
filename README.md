@@ -2,7 +2,7 @@
 
 运行方式：独立/放在MaiBot本体作为插件
 <div align="center">
-[![Discord](https://img.shields.io/badge/Discord-MaiBot-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/ue4xJw7s)
+[![Discord](https://custom-icon-badges.demolab.com/badge/Discord-MaiBot-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/ue4xJw7s)
 </div>
 ## 使用说明
 
