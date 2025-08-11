@@ -1,7 +1,4 @@
-
-<div align="center">
-[![Discord](https://img.shields.io/badge/Discord-MaiBot-5865F2%3Fstyle%3Dflat%26logo%3Ddiscord%26logoColor%3Dwhite?style=plastic&logo=discord&color=5865F2)](https://discord.gg/ue4xJw7s)
-</div>
+[![Discord](https://img.shields.io/badge/Discord-MaiBot-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/ue4xJw7s)
 
 # MaiBot 与 Discord 的 Adapter
 
