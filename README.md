@@ -1,11 +1,10 @@
 
 <div align="center">
-![Discord](https://custom-icon-badges.demolab.com/badge/Discord-MaiBot-5865F2%3Fstyle%3Dflat%26logo%3Ddiscord%26logoColor%3Dwhite?style=plastic&logo=discord&color=5865F2)
+![Discord](https://img.shields.io/badge/Discord-MaiBot-5865F2%3Fstyle%3Dflat%26logo%3Ddiscord%26logoColor%3Dwhite?style=plastic&logo=discord&color=5865F2)
 </div>
 # MaiBot 与 Discord 的 Adapter
 
 运行方式：独立/放在MaiBot本体作为插件
-
 ## 使用说明
 
 ### 一、获取必要的文件
