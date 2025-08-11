@@ -2,7 +2,8 @@
 
 运行方式：独立/放在MaiBot本体作为插件
 <div align="center">
-[![Discord](https://custom-icon-badges.demolab.com/badge/Discord-MaiBot-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/ue4xJw7s)
+[![Discord](![Static Badge](https://custom-icon-badges.demolab.com/badge/Discord-MaiBot-5865F2%3Fstyle%3Dflat%26logo%3Ddiscord%26logoColor%3Dwhite?style=plastic&logo=discord&color=5865F2)
+)
 </div>
 ## 使用说明
 
