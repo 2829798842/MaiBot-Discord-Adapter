@@ -216,8 +216,9 @@ class DiscordMessageHandler:
             # 构造格式信息
             format_info = FormatInfo(
                 content_format=content_formats if content_formats else ["text"],
-                accept_format=["text", "image", "voice", "emoji", "reply"]
+                accept_format=["text", "image", "emoji", "reply", "voice", "command", "voiceurl", "music", "videourl", "file"]
             )
+            # 部分格式现在无用
             
             # 构造消息元数据
             message_info = BaseMessageInfo(

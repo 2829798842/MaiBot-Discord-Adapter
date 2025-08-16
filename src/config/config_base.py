@@ -42,14 +42,18 @@ class DiscordConfig:
     Attributes:
         token (str): Discord Bot Token
         intents (Dict[str, bool]): Discord 权限意图配置
+        retry (Dict[str, Any]): 重试配置
     """
     
     token: str = ""
     intents: Dict[str, bool] = None
+    retry: Dict[str, Any] = None
     
     def __post_init__(self):
         if self.intents is None:
             self.intents = {}
+        if self.retry is None:
+            self.retry = {}
 
 
 @dataclass

@@ -4,7 +4,6 @@
 
 import discord
 import asyncio
-import aiohttp
 import traceback
 from ..logger import logger
 from ..config import global_config, is_user_allowed
@@ -26,6 +25,8 @@ class DiscordClientManager:
         self.client = None
         self.message_queue = asyncio.Queue()
         self.is_connected = False
+        self.connection_attempts = 0
+        self.is_shutting_down = False
         self._setup_client()
     
     def _setup_client(self):
@@ -42,10 +43,6 @@ class DiscordClientManager:
         intents.message_content = discord_intents.get("message_content", True)
         
         logger.debug(f"Discord 权限意图: messages={intents.messages}, guilds={intents.guilds}, dm_messages={intents.dm_messages}, message_content={intents.message_content}")
-        
-        # 记录网络配置信息（用于诊断）
-        network_config = getattr(global_config, 'network', {})
-        logger.debug(f"网络配置: {network_config}")
         
         # 设置代理（如果配置了）
         proxy = getattr(global_config.discord, 'proxy_url', None)
@@ -68,35 +65,15 @@ class DiscordClientManager:
         async def on_error(event, *args, **kwargs):
             await self._on_error(event, *args, **kwargs)
         
+        @self.client.event
+        async def on_disconnect():
+            await self._on_disconnect()
+        
+        @self.client.event
+        async def on_resume():
+            await self._on_resume()
+        
         logger.debug("Discord 客户端初始化完成")
-    
-    async def _create_connector(self):
-        """创建网络连接器（异步）
-        
-        Returns:
-            aiohttp.BaseConnector: 配置好的连接器
-        """
-        # 获取网络配置
-        network_config = getattr(global_config, 'network', {})
-        driver = network_config.get('driver', 'aiohttp')
-        ssl_verify = network_config.get('ssl_verify', True)
-        timeout = network_config.get('timeout', 30)
-        pool_size = network_config.get('pool_size', 100)
-        
-        logger.debug(f"网络配置: driver={driver}, ssl_verify={ssl_verify}, timeout={timeout}, pool_size={pool_size}")
-        
-        # 创建aiohttp连接器
-        connector = aiohttp.TCPConnector(
-            limit=pool_size,
-            limit_per_host=30,
-            ttl_dns_cache=300,
-            use_dns_cache=True,
-            ssl=ssl_verify,
-            enable_cleanup_closed=True
-        )
-        
-        logger.debug(f"创建 {driver} 连接器成功")
-        return connector
     
     async def _on_ready(self):
         """Discord 客户端就绪事件处理器
@@ -104,8 +81,9 @@ class DiscordClientManager:
         当 Discord 客户端连接成功并准备就绪时调用
         """
         self.is_connected = True
-        logger.debug(f"Discord 客户端已连接: {self.client.user}")
-        logger.debug(f"Bot 已加入 {len(self.client.guilds)} 个服务器")
+        self.connection_attempts = 0  # 重置重连计数
+        logger.info(f"Discord 客户端已连接: {self.client.user}")
+        logger.info(f"Bot 已加入 {len(self.client.guilds)} 个服务器")
         
         # 显示加入的服务器信息
         for guild in self.client.guilds:
@@ -115,7 +93,16 @@ class DiscordClientManager:
             for channel in text_channels:
                 logger.debug(f"  - 频道: {channel.name} (ID: {channel.id})")
         
-        logger.debug("Discord 客户端准备就绪，等待消息事件...")
+        # 启动后台监控任务（延迟启动，确保连接完全建立）
+        try:
+            from ..background_tasks import background_task_manager
+            if not background_task_manager.connection_monitor or not background_task_manager.connection_monitor.is_running:
+                background_task_manager.start_all_tasks()
+                logger.info("后台监控任务已启动")
+        except Exception as e:
+            logger.error(f"启动后台监控任务失败: {e}")
+        
+        logger.info("Discord 客户端准备就绪，等待消息事件...")
     
     async def _on_error(self, event: str, *args, **kwargs):
         """Discord 客户端错误事件处理器
@@ -126,6 +113,17 @@ class DiscordClientManager:
             **kwargs: 事件关键字参数
         """
         logger.error(f"Discord 事件 {event} 发生错误: {args}, {kwargs}")
+    
+    async def _on_disconnect(self):
+        """Discord 客户端断开连接事件处理器"""
+        self.is_connected = False
+        logger.warning("Discord 客户端连接断开")
+    
+    async def _on_resume(self):
+        """Discord 客户端重新连接事件处理器"""
+        self.is_connected = True
+        self.connection_attempts = 0  # 重置重连计数
+        logger.info("Discord 客户端连接已恢复")
     
     async def _on_message(self, message: discord.Message):
         """Discord 消息事件处理器
@@ -178,7 +176,7 @@ class DiscordClientManager:
             Exception: 当启动失败时抛出异常
         """
         # 获取重试配置
-        retry_config = getattr(global_config.discord, 'retry', {})
+        retry_config = global_config.discord.retry
         max_retries = retry_config.get('max_retries', 3)
         retry_delay = retry_config.get('retry_delay', 5)
         
@@ -222,16 +220,13 @@ class DiscordClientManager:
         # 所有重试都失败了
         error_msg = f"Discord 客户端启动失败，已重试 {max_retries} 次。最后错误: {last_error}"
         logger.error(error_msg)
-        logger.error("可能的解决方案:")
-        logger.error("1. 检查网络连接和防火墙设置")
-        logger.error("2. 检查Discord token是否正确")
-        logger.error("3. 尝试使用代理或VPN")
-        logger.error("4. 检查DNS设置（可能被拦截或污染）")
-        logger.error("5. 在配置中设置 proxy_url")
         raise Exception(error_msg)
-    
+
     async def stop(self):
         """停止 Discord 客户端"""
+        self.is_shutting_down = True
+        
+        # 关闭Discord客户端
         if self.client and not self.client.is_closed():
             await self.client.close()
             logger.info("Discord 客户端已关闭")

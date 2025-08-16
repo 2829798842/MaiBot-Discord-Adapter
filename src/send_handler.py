@@ -2,8 +2,9 @@
 主要功能：处理来自MaiBot Core的消息并发送到Discord
 """
 
-import asyncio
 import base64
+import io
+import time
 import traceback
 import discord
 from maim_message import MessageBase, Seg
@@ -95,18 +96,133 @@ class DiscordSendHandler:
             
             # 发送消息
             if content or files:
-                sent_message = await target_channel.send(
-                    content=content if content else None,
-                    files=files if files else None,
-                    reference=reference
-                )
-                logger.debug(f"消息发送成功: {sent_message.id} 到频道 {target_channel.name if hasattr(target_channel, 'name') else 'DM'}")
+                # 检查消息长度并分割发送
+                await self._send_message_with_length_check(target_channel, content, files, reference)
             else:
                 logger.warning("消息内容为空，跳过发送")
             
         except Exception as e:
             logger.error(f"发送 Discord 消息时发生错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
+    
+    async def _send_message_with_length_check(self, target_channel, content: str | None, files: list | None, reference):
+        """检查消息长度并分割发送
+        
+        Args:
+            target_channel: 目标频道
+            content: 消息内容
+            files: 文件列表
+            reference: 回复引用
+        """
+        # Discord消息长度限制
+        MAX_MESSAGE_LENGTH = 2000
+        
+        try:
+            # 如果有文件，先发送文件（文件消息优先）
+            if files:
+                first_message = True
+                for file in files:
+                    # 第一个文件可以带文本内容和回复
+                    if first_message and content and len(content) <= MAX_MESSAGE_LENGTH:
+                        sent_message = await target_channel.send(
+                            content=content,
+                            file=file,
+                            reference=reference
+                        )
+                        logger.debug(f"发送文件消息成功: {sent_message.id} (带内容)")
+                        content = None  # 内容已发送，清空
+                        first_message = False
+                    else:
+                        # 后续文件只发送文件本身
+                        sent_message = await target_channel.send(file=file)
+                        logger.debug(f"发送文件消息成功: {sent_message.id}")
+            
+            # 处理文本内容
+            if content:
+                if len(content) <= MAX_MESSAGE_LENGTH:
+                    # 内容不超长，直接发送
+                    sent_message = await target_channel.send(
+                        content=content,
+                        reference=reference if not files else None  # 如果已经有文件消息带了回复，这里就不重复了
+                    )
+                    logger.debug(f"发送文本消息成功: {sent_message.id}")
+                else:
+                    # 内容超长，需要分割发送
+                    logger.warning(f"消息内容过长({len(content)}字符)，将分割发送")
+                    await self._send_long_message(target_channel, content, reference if not files else None)
+            
+        except Exception as e:
+            logger.error(f"分割发送消息时发生错误: {e}")
+            logger.error(f"错误详情: {traceback.format_exc()}")
+    
+    async def _send_long_message(self, target_channel, content: str, reference):
+        """分割发送长消息
+        
+        Args:
+            target_channel: 目标频道
+            content: 长消息内容
+            reference: 回复引用
+        """
+        MAX_MESSAGE_LENGTH = 2000
+        
+        # 按行分割，尽量保持内容完整性
+        lines = content.split('\n')
+        current_message = ""
+        message_count = 0
+        
+        for line in lines:
+            # 检查单行是否过长
+            if len(line) > MAX_MESSAGE_LENGTH:
+                # 单行过长，需要强制分割
+                if current_message:
+                    # 先发送当前累积的消息
+                    await self._send_single_message_part(target_channel, current_message, reference, message_count)
+                    current_message = ""
+                    message_count += 1
+                
+                # 分割长行
+                while len(line) > MAX_MESSAGE_LENGTH:
+                    part = line[:MAX_MESSAGE_LENGTH]
+                    line = line[MAX_MESSAGE_LENGTH:]
+                    await self._send_single_message_part(target_channel, part, reference, message_count)
+                    message_count += 1
+                
+                # 剩余部分
+                if line:
+                    current_message = line
+            else:
+                # 检查添加这行后是否会超长
+                test_message = current_message + '\n' + line if current_message else line
+                if len(test_message) > MAX_MESSAGE_LENGTH:
+                    # 会超长，先发送当前消息
+                    if current_message:
+                        await self._send_single_message_part(target_channel, current_message, reference, message_count)
+                        message_count += 1
+                    current_message = line
+                else:
+                    current_message = test_message
+        
+        # 发送最后一部分
+        if current_message:
+            await self._send_single_message_part(target_channel, current_message, reference, message_count)
+    
+    async def _send_single_message_part(self, target_channel, content: str, reference, part_number: int):
+        """发送单个消息片段
+        
+        Args:
+            target_channel: 目标频道
+            content: 消息内容
+            reference: 回复引用（只在第一条消息使用）
+            part_number: 片段编号
+        """
+        try:
+            sent_message = await target_channel.send(
+                content=content,
+                reference=reference if part_number == 0 else None  # 只有第一条消息带回复
+            )
+            logger.debug(f"发送消息片段成功: {sent_message.id} (第{part_number + 1}部分)")
+        except Exception as e:
+            logger.error(f"发送消息片段失败: {e}")
     
     async def _get_target_channel(self, maim_message: MessageBase) -> discord.abc.Messageable | None:
         """根据消息信息获取目标频道
@@ -229,52 +345,85 @@ class DiscordSendHandler:
                 mention_text = self._process_mention_segment(seg.data)
                 if mention_text:
                     content_parts.append(mention_text)
-            elif seg.type == "emoji":
+            elif seg.type in ["emoji", "image"]:
+                # dc中只有文件格式
                 try:
-                    # 尝试将emoji数据作为Unicode emoji处理
-                    emoji_text = str(seg.data)
+                    image_data_str = str(seg.data)
+                    logger.debug(f"处理{seg.type}数据，长度: {len(image_data_str)}")
                     
-                    # 检查是否是base64编码的图片数据
+                    # 尝试解码base64数据
                     try:
-                        # 如果是base64，解码并作为图片文件发送
-                        if len(emoji_text) > 50 and not any(c in emoji_text for c in [' ', '\n', '\t']):
-                            emoji_data = base64.b64decode(seg.data)
-                            files.append(discord.File(
-                                fp=asyncio.BytesIO(emoji_data),
-                                filename="emoji.png"
-                            ))
-                            logger.debug("处理base64表情包文件")
+                        decoded_data = base64.b64decode(image_data_str)
+                        logger.debug(f"成功解码{seg.type}的base64数据，大小: {len(decoded_data)} 字节")
+                        
+                        # 检测图片格式
+                        image_format = self._detect_image_format(decoded_data)
+                        logger.debug(f"检测到{seg.type}格式: {image_format}")
+                        
+                        # 设置文件名，使用时间戳确保唯一性
+                        timestamp = int(time.time())
+                        if image_format != 'unknown':
+                            prefix = "emoji" if seg.type == "emoji" else "image"
+                            filename = f"{prefix}_{timestamp}.{image_format}"
                         else:
-                            # 否则作为Unicode emoji文本处理
-                            content_parts.append(emoji_text)
-                            logger.debug(f"处理Unicode emoji文本: {emoji_text}")
-                    except Exception:
-                        # base64解码失败，作为文本处理
-                        content_parts.append(emoji_text)
-                        logger.debug(f"表情包数据解码失败，作为文本处理: {emoji_text[:50]}...")
+                            # 即使格式未知，也强制保存为文件
+                            prefix = "emoji" if seg.type == "emoji" else "image"
+                            filename = f"{prefix}_{timestamp}.bin"
+                            logger.warning(f"{seg.type}格式未知，保存为.bin文件")
+                        
+                        # 创建Discord文件对象
+                        files.append(discord.File(
+                            fp=io.BytesIO(decoded_data),
+                            filename=filename
+                        ))
+                        logger.info(f"成功处理{seg.type}文件: {filename}")
+                        
+                    except Exception as decode_error:
+                        # base64解码失败，仍然尝试作为文件处理
+                        logger.warning(f"{seg.type}base64解码失败: {decode_error}，尝试直接处理")
+                        try:
+                            # 将字符串转换为字节并保存
+                            data_bytes = image_data_str.encode('utf-8')
+                            timestamp = int(time.time())
+                            prefix = "emoji" if seg.type == "emoji" else "image"
+                            filename = f"{prefix}_{timestamp}.txt"
+                            
+                            files.append(discord.File(
+                                fp=io.BytesIO(data_bytes),
+                                filename=filename
+                            ))
+                            logger.info(f"作为文本文件处理{seg.type}: {filename}")
+                        except Exception as final_error:
+                            # 最终失败，添加文本说明
+                            display_name = "表情" if seg.type == "emoji" else "图片"
+                            content_parts.append(f"[{display_name}处理失败]")
+                            logger.error(f"无法处理{seg.type}: {final_error}")
                         
                 except Exception as e:
-                    logger.error(f"处理表情包时发生错误: {e}")
-            elif seg.type == "image":
-                try:
-                    # 解码 base64 图片
-                    image_data = base64.b64decode(seg.data)
-                    files.append(discord.File(
-                        fp=asyncio.BytesIO(image_data),
-                        filename="image.png"
-                    ))
-                except Exception as e:
-                    logger.error(f"处理图片时发生错误: {e}")
+                    display_name = "表情" if seg.type == "emoji" else "图片"
+                    logger.error(f"处理{display_name}时发生错误: {e}")
+                    content_parts.append(f"[{display_name}]")
             elif seg.type == "voice":
                 try:
                     # 解码 base64 语音
                     voice_data = base64.b64decode(seg.data)
                     files.append(discord.File(
-                        fp=asyncio.BytesIO(voice_data),
+                        fp=io.BytesIO(voice_data),
                         filename="voice.wav"
                     ))
                 except Exception as e:
                     logger.error(f"处理语音时发生错误: {e}")
+            elif seg.type == "voiceurl":
+                content_parts.append(f"[语音消息: {seg.data}]")
+                # 照搬ncada，暂时无用
+            elif seg.type == "music":
+                content_parts.append(f"[音乐: {seg.data}]")
+            elif seg.type == "videourl":
+                content_parts.append(f"[视频: {seg.data}]")
+            elif seg.type == "file":
+                content_parts.append(f"[文件: {seg.data}]")
+            elif seg.type == "command":
+                content_parts.append(f"[命令: {seg.data}]")
             elif seg.type == "seglist" and isinstance(seg.data, list):
                 for sub_seg in seg.data:
                     process_segment(sub_seg)
@@ -418,6 +567,36 @@ class DiscordSendHandler:
         except Exception as e:
             logger.error(f"处理mention段时发生错误: {e}")
             return ""
+    
+    def _detect_image_format(self, image_data: bytes) -> str:
+        """检测图片格式
+        
+        Args:
+            image_data: 图片的二进制数据
+            
+        Returns:
+            str: 图片格式（如 'png', 'jpg', 'gif', 'webp' 等），无法识别时返回 'unknown'
+        """
+        try:
+            # 检查文件头来确定图片格式
+            if image_data.startswith(b'\x89PNG\r\n\x1a\n'):
+                return 'png'
+            elif image_data.startswith(b'\xff\xd8\xff'):
+                return 'jpg'
+            elif image_data.startswith(b'GIF87a') or image_data.startswith(b'GIF89a'):
+                return 'gif'
+            elif image_data.startswith(b'RIFF') and len(image_data) >= 12 and image_data[8:12] == b'WEBP':
+                return 'webp'
+            elif image_data.startswith(b'BM'):
+                return 'bmp'
+            elif image_data.startswith(b'\x00\x00\x01\x00') or image_data.startswith(b'\x00\x00\x02\x00'):
+                return 'ico'
+            else:
+                # 无法识别的格式
+                return 'unknown'
+        except Exception as e:
+            logger.error(f"检测图片格式时发生错误: {e}")
+            return 'unknown'
 
 
 # 创建全局发送处理器实例

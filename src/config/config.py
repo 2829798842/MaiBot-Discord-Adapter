@@ -29,7 +29,8 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
         discord_config = config_data.get('discord', {})
         config.discord = DiscordConfig(
             token=discord_config.get('token', ''),
-            intents=discord_config.get('intents', {})
+            intents=discord_config.get('intents', {}),
+            retry=discord_config.get('retry', {})
         )
         
         # 加载聊天控制配置
@@ -60,7 +61,7 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
         )
         
         # 验证必要配置
-        if not config.discord.token or config.discord.token == "YOUR_DISCORD_BOT_TOKEN_HERE":
+        if not config.discord.token or config.discord.token == "your_discord_bot_token_":
             raise ValueError("请在配置文件中设置有效的 Discord Bot Token")
             
         return config
@@ -91,12 +92,10 @@ def is_user_allowed(config: GlobalConfig, user_id: int, guild_id: int = None, ch
     # 检查用户权限
     logger.debug(f"用户权限检查: 类型={chat_config.user_list_type}, 列表={chat_config.user_list}")
     if chat_config.user_list_type == "whitelist":
-        # 白名单模式：只有在用户名单中的用户可以使用
         if user_id not in chat_config.user_list:
             logger.debug(f"用户 {user_id} 不在白名单中")
             return False
     elif chat_config.user_list_type == "blacklist":
-        # 黑名单模式：用户名单中的用户禁止使用
         if user_id in chat_config.user_list:
             logger.debug(f"用户 {user_id} 在黑名单中")
             return False
@@ -105,12 +104,10 @@ def is_user_allowed(config: GlobalConfig, user_id: int, guild_id: int = None, ch
     if guild_id is not None:
         logger.debug(f"服务器权限检查: 类型={chat_config.guild_list_type}, 列表={chat_config.guild_list}")
         if chat_config.guild_list_type == "whitelist":
-            # 白名单模式：只有在服务器名单中的服务器可以使用
             if guild_id not in chat_config.guild_list:
                 logger.debug(f"服务器 {guild_id} 不在白名单中")
                 return False
         elif chat_config.guild_list_type == "blacklist":
-            # 黑名单模式：服务器名单中的服务器禁止使用
             if guild_id in chat_config.guild_list:
                 logger.debug(f"服务器 {guild_id} 在黑名单中")
                 return False
@@ -119,12 +116,10 @@ def is_user_allowed(config: GlobalConfig, user_id: int, guild_id: int = None, ch
     if channel_id is not None:
         logger.debug(f"频道权限检查: 类型={chat_config.channel_list_type}, 列表={chat_config.channel_list}")
         if chat_config.channel_list_type == "whitelist":
-            # 白名单模式：只有在频道名单中的频道可以使用
             if channel_id not in chat_config.channel_list:
                 logger.debug(f"频道 {channel_id} 不在白名单中")
                 return False
         elif chat_config.channel_list_type == "blacklist":
-            # 黑名单模式：频道名单中的频道禁止使用
             if channel_id in chat_config.channel_list:
                 logger.debug(f"频道 {channel_id} 在黑名单中")
                 return False
@@ -133,5 +128,4 @@ def is_user_allowed(config: GlobalConfig, user_id: int, guild_id: int = None, ch
     return True
 
 
-# 加载全局配置
 global_config = load_config()

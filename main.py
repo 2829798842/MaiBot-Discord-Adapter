@@ -9,6 +9,7 @@ from src.send_handler import send_handler
 from src.mmc_com_layer import mmc_start_com, mmc_stop_com, router
 from src.utils import async_task_manager
 from src.config import global_config
+from src.background_tasks import background_task_manager
 
 # 消息队列
 message_queue = asyncio.Queue()
@@ -80,6 +81,13 @@ async def graceful_shutdown():
         
         # 设置关闭事件
         shutdown_event.set()
+        
+        # 停止后台任务
+        try:
+            background_task_manager.stop_all_tasks()
+            logger.info("后台任务已停止")
+        except Exception as e:
+            logger.error(f"停止后台任务时出错: {e}")
         
         # 关闭 Discord 客户端
         try:
@@ -188,12 +196,17 @@ async def run_adapter():
             logger.error(f"创建消息收集任务失败: {e}")
             return
         
-        # 启动 Discord 客户端（可能会失败）
+        # 启动 Discord 客户端
         discord_task = None
         try:
+            # 初始化后台任务管理器
+            background_task_manager.register_connection_monitor(discord_client)
+            logger.info("后台任务管理器已初始化")
+            
             discord_task = asyncio.create_task(discord_client.start())
             tasks.append(discord_task)
             logger.info("Discord 客户端任务已创建")
+            
         except Exception as e:
             logger.error(f"创建 Discord 客户端任务失败: {e}")
             # Discord 失败但仍然可以继续运行其他组件
