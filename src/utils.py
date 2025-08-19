@@ -37,13 +37,13 @@ def format_file_size(size_bytes: int) -> str:
     """
     if size_bytes == 0:
         return "0B"
-    
+
     size_names = ["B", "KB", "MB", "GB", "TB"]
     i = 0
     while size_bytes >= 1024 and i < len(size_names) - 1:
         size_bytes /= 1024.0
         i += 1
-    
+
     return f"{size_bytes:.1f}{size_names[i]}"
 
 
@@ -78,13 +78,13 @@ async def safe_await(coro, timeout: float = 30.0, default: Any = None) -> Any:
         return await asyncio.wait_for(coro, timeout=timeout)
     except asyncio.TimeoutError:
         return default
-    except Exception:
+    except (asyncio.CancelledError, RuntimeError):
         return default
 
 
 class RateLimiter:
     """简单的速率限制器"""
-    
+
     def __init__(self, max_calls: int, time_window: float):
         """初始化速率限制器
         
@@ -95,7 +95,7 @@ class RateLimiter:
         self.max_calls = max_calls
         self.time_window = time_window
         self.calls: List[float] = []
-    
+
     async def acquire(self) -> bool:
         """获取执行权限
         
@@ -103,18 +103,18 @@ class RateLimiter:
             bool: 是否获得执行权限
         """
         now = time.time()
-        
+
         # 清理过期的调用记录
         self.calls = [call_time for call_time in self.calls if now - call_time < self.time_window]
-        
+
         # 检查是否超过限制
         if len(self.calls) >= self.max_calls:
             return False
-        
+
         # 记录本次调用
         self.calls.append(now)
         return True
-    
+
     async def wait_if_needed(self) -> None:
         """如果需要则等待直到可以执行"""
         while not await self.acquire():
@@ -123,11 +123,11 @@ class RateLimiter:
 
 class AsyncTaskManager:
     """异步任务管理器"""
-    
+
     def __init__(self):
         """初始化任务管理器"""
         self.tasks: List[asyncio.Task] = []
-    
+
     def add_task(self, coro) -> asyncio.Task:
         """添加任务
         
@@ -139,29 +139,29 @@ class AsyncTaskManager:
         """
         task = asyncio.create_task(coro)
         self.tasks.append(task)
-        
+
         # 添加完成回调以清理任务列表
         task.add_done_callback(self._task_done_callback)
-        
+
         return task
-    
+
     def _task_done_callback(self, task: asyncio.Task):
         """任务完成回调"""
         if task in self.tasks:
             self.tasks.remove(task)
-    
+
     async def cancel_all(self):
         """取消所有任务"""
         for task in self.tasks[:]:  # 创建副本以避免修改时迭代
             if not task.done():
                 task.cancel()
-        
+
         # 等待所有任务完成或取消
         if self.tasks:
             await asyncio.gather(*self.tasks, return_exceptions=True)
-        
+
         self.tasks.clear()
-    
+
     def get_active_count(self) -> int:
         """获取活跃任务数量
         
