@@ -429,6 +429,8 @@ class DiscordSendHandler:
                     display_name = "表情" if seg.type == "emoji" else "图片"
                     logger.error(f"处理{display_name}时发生错误: {e}")
                     content_parts.append(f"[{display_name}]")
+
+            # 待修正
             elif seg.type == "voice":
                 try:
                     # 解码 base64 语音
@@ -439,12 +441,7 @@ class DiscordSendHandler:
                     ))
                 except (ValueError, TypeError, binascii.Error) as e:
                     logger.error(f"处理语音时发生错误: {e}")
-            elif seg.type == "voiceurl":
-                content_parts.append(f"[语音消息: {seg.data}]")
-                # 照搬ncada，暂时无用
-            elif seg.type == "music":
-                content_parts.append(f"[音乐: {seg.data}]")
-            elif seg.type == "videourl":
+            elif seg.type == "video":
                 content_parts.append(f"[视频: {seg.data}]")
             elif seg.type == "file":
                 content_parts.append(f"[文件: {seg.data}]")
