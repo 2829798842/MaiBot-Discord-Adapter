@@ -46,13 +46,27 @@ class ConnectionMonitorTask:
             if not self.client_manager or self.client_manager.is_shutting_down:
                 return
 
+            # 检查连接状态，设置超时保护
             try:
-                await self._check_connection_status()
-            except (ConnectionError, RuntimeError) as e:
-                logger.error(f"连接监控任务出错: {e}")
-                # 发生错误时也标记为需要重连
+                await asyncio.wait_for(self._check_connection_status(), timeout=8)
+            except asyncio.TimeoutError:
+                logger.error("连接状态检测超时，准备断开重连")
                 if self.client_manager:
                     self.client_manager.is_connected = False
+                    if hasattr(self.client_manager, 'force_reconnect'):
+                        await self.client_manager.force_reconnect()
+            except (ConnectionError, RuntimeError) as e:
+                logger.error(f"连接监控任务出错: {e}")
+                if self.client_manager:
+                    self.client_manager.is_connected = False
+                    if hasattr(self.client_manager, 'force_reconnect'):
+                        await self.client_manager.force_reconnect()
+            except Exception as e:
+                logger.error(f"连接监控任务发生未知异常: {e}")
+                if self.client_manager:
+                    self.client_manager.is_connected = False
+                    if hasattr(self.client_manager, 'force_reconnect'):
+                        await self.client_manager.force_reconnect()
 
         @connection_monitor.before_loop
         async def before_monitor():
@@ -97,6 +111,8 @@ class ConnectionMonitorTask:
             if self.client_manager.is_connected:
                 logger.warning("检测到Discord连接已关闭")
                 self.client_manager.is_connected = False
+                if hasattr(self.client_manager, 'force_reconnect'):
+                    await self.client_manager.force_reconnect()
         else:
             # 使用Discord客户端的实际连接状态检查
             # is_ready() 检查客户端是否完全连接并准备就绪
@@ -105,31 +121,39 @@ class ConnectionMonitorTask:
                 is_ready = client.is_ready()
                 latency = client.latency
 
-                # 检查是否真正连接并且网络状态正常
-                if is_ready and latency > 0 and latency < 10.0:  # 延迟在合理范围内
-                    # 连接正常，更新状态
+                # 检查latency是否异常（None、inf、负值等）
+                latency_invalid = (
+                    latency is None or
+                    (isinstance(latency, float) and (latency != latency or latency == float('inf') or latency < 0))
+                )
+
+                if is_ready and not latency_invalid and latency > 0 and latency < 10.0:
                     if not self.client_manager.is_connected:
                         logger.info("检测到Discord连接已恢复")
                         self.client_manager.is_connected = True
                     logger.debug(f"Discord连接状态正常 (延迟: {latency:.3f}s)")
-                elif is_ready and latency >= 10.0:
-                    # 连接延迟过高，可能网络有问题
-                    logger.warning(f"Discord连接延迟过高: {latency:.3f}s")
+                elif is_ready and (latency_invalid or latency >= 10.0):
+                    logger.warning(f"Discord连接延迟异常: {latency}")
                     if self.client_manager.is_connected:
-                        logger.warning("由于延迟过高，标记连接为不稳定")
-                else:
-                    # 客户端存在但还未完全连接或网络有问题
-                    if self.client_manager.is_connected:
-                        logger.debug("Discord客户端可能正在重连中...")
+                        logger.warning("由于延迟异常，尝试进行断线重连")
                         self.client_manager.is_connected = False
+                        if hasattr(self.client_manager, 'force_reconnect'):
+                            await self.client_manager.force_reconnect()
+                else:
+                    if self.client_manager.is_connected:
+                        logger.debug("Discord客户端可能正在重连中...尝试进行断线重连")
+                        self.client_manager.is_connected = False
+                        if hasattr(self.client_manager, 'force_reconnect'):
+                            await self.client_manager.force_reconnect()
                     else:
                         logger.debug("Discord客户端存在但未就绪，可能正在连接中...")
-
-            except (AttributeError, ConnectionError) as e:
+            except (AttributeError, ConnectionError, asyncio.TimeoutError) as e:
                 logger.debug(f"检查连接状态时出错: {e}")
                 if self.client_manager.is_connected:
-                    logger.warning("Discord连接状态检查失败，可能连接不稳定")
+                    logger.warning("Discord连接状态检查失败，尝试进行断线重连")
                     self.client_manager.is_connected = False
+                    if hasattr(self.client_manager, 'force_reconnect'):
+                        await self.client_manager.force_reconnect()
 
     def start(self):
         """启动监控任务"""

@@ -18,14 +18,14 @@ class ChatConfig:
         user_list_type (str): 用户名单类型（whitelist, blacklist）
         user_list (List[int]): 用户名单
     """
-    
+
     guild_list_type: str = "whitelist"
     guild_list: List[int] = None
     channel_list_type: str = "whitelist"
     channel_list: List[int] = None
     user_list_type: str = "whitelist"
     user_list: List[int] = None
-    
+
     def __post_init__(self):
         if self.guild_list is None:
             self.guild_list = []
@@ -44,11 +44,11 @@ class DiscordConfig:
         intents (Dict[str, bool]): Discord 权限意图配置
         retry (Dict[str, Any]): 重试配置
     """
-    
+
     token: str = ""
     intents: Dict[str, bool] = None
     retry: Dict[str, Any] = None
-    
+
     def __post_init__(self):
         if self.intents is None:
             self.intents = {}
@@ -66,7 +66,7 @@ class MaiBotServerConfig:
         platform_name (str): 平台标识符
         token (Optional[str]): 认证 Token
     """
-    
+
     host: str = "127.0.0.1"
     port: int = 8000
     platform_name: str = "discord_bot_instance_1"
@@ -81,7 +81,7 @@ class DebugConfig:
         level (str): 日志级别
         log_file (Optional[str]): 日志文件路径
     """
-    
+
     level: str = "INFO"
     log_file: Optional[str] = "logs/discord_adapter.log"
 
@@ -96,12 +96,12 @@ class GlobalConfig:
         maibot_server (MaiBotServerConfig): MaiBot 服务器配置
         debug (DebugConfig): 调试配置
     """
-    
+
     discord: DiscordConfig = None
     chat: ChatConfig = None
-    maibot_server: MaiBotServerConfig = None  
+    maibot_server: MaiBotServerConfig = None
     debug: DebugConfig = None
-    
+
     def __post_init__(self):
         if self.discord is None:
             self.discord = DiscordConfig()
