@@ -205,13 +205,18 @@ async def run_adapter():
         # 启动 Discord 客户端
         discord_task = None
         try:
-            # 初始化后台任务管理器
-            background_task_manager.register_connection_monitor(discord_client)
-            logger.info("后台任务管理器已初始化")
-
+            # 先启动 Discord 客户端
             discord_task = asyncio.create_task(discord_client.start())
             tasks.append(discord_task)
             logger.info("Discord 客户端任务已创建")
+
+            # 等待一小段时间让Discord客户端开始连接
+            await asyncio.sleep(2)
+
+            # 然后初始化后台任务管理器并启动监控
+            background_task_manager.register_connection_monitor(discord_client)
+            background_task_manager.start_all_tasks()
+            logger.info("后台任务管理器已初始化并启动")
 
         except Exception as e:
             logger.error(f"创建 Discord 客户端任务失败: {e}")
