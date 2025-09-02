@@ -207,8 +207,7 @@ python .\main.py
 #### 解决方案
 windows系统
 ```
-set http_proxy=socks5://127.0.0.1:7890
-set https_proxy=socks5://127.0.0.1:7890
+set http_proxy=http://127.0.0.1:7890 ; set https_proxy=http://127.0.0.1:7890
 ```(端口为你的代理配置的端口)
 
 linux系统
@@ -216,7 +215,7 @@ linux系统
 export http_proxy=http://127.0.0.1:7890
 export https_proxy=http://127.0.0.1:7890
 ```
-如果仍出现上述问题，请尝试开启tun模式或者换用更稳定的vpn
+如果仍出现上述问题，请尝试开启tun模式或者换用更稳定的vpn（一般是被墙了）
 
 
 ## 特别鸣谢

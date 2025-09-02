@@ -67,7 +67,7 @@ async def discord_message_collector():
                     if hasattr(discord_client, 'is_connected') and discord_client.is_connected:
                         logger.debug("消息收集器: 正在等待消息... ")
                     else:
-                        logger.warning("消息收集器: Discord未连接，正在等待重连...")
+                        logger.debug("消息收集器: Discord未连接，正在等待重连...")
                 await asyncio.sleep(0.01)
         except asyncio.TimeoutError:
             # 超时正常，继续循环
