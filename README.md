@@ -1,8 +1,24 @@
+这里是MaiBot非官方服务器，欢迎加入
 [![Discord](https://img.shields.io/badge/Discord-MaiBot-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/ue4xJw7s)
 
 # MaiBot 与 Discord 的 Adapter
 
 运行方式：独立/放在MaiBot本体作为插件
+
+#### 当前功能状态
+
+- [x] Discord消息接收
+  - [x] 文本消息处理
+  - [x] 图片消息处理
+  - [x] emoji消息识别
+  - [x] 贴纸消息处理
+  - [x] 引用回复支持
+  - [x] 子区消息处理
+- [x] 配置与权限
+  - [x] Discord权限意图配置
+  - [x] 黑白名单支持 (用户/频道/服务器)
+
+
 ## 使用说明
 
 ### 一、获取必要的文件
@@ -185,37 +201,22 @@ uv run python main.py
 python .\main.py
 ```
 
+## 常见问题解决
+遇到**"Cannot connect to host discord.com:443 ssl:default"**:
+遇到这个问题可能是您的代理出现问题
+#### 解决方案
+windows系统
+```
+set http_proxy=http://127.0.0.1:7890 ; set https_proxy=http://127.0.0.1:7890
+```(端口为你的代理配置的端口)
 
+linux系统
+```
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+```
+如果仍出现上述问题，请尝试开启tun模式或者换用更稳定的vpn（一般是被墙了）
 
-#### 当前功能状态
-
-- [x] Discord消息接收
-  - [x] 文本消息处理
-  - [x] 图片消息处理
-  - [x] emoji消息识别
-  - [x] 贴纸消息处理
-  - [x] 引用回复支持
-- [x] 配置与权限
-  - [x] Discord权限意图配置
-  - [x] 黑白名单支持 (用户/频道/服务器)
-
-
-##### changelog
-- 改善发送图片表情包等逻辑
-- 改善断线重连问题
-- 
-
-由于本人技术有限，大多功能尚未实现，请提issue💦💦💦
-
-### 目前已知bug
-
-1.**严重？** 在未知情况下会出现启动适配器后无法连接discord的情况
-具体表现为在discord还能正常连接的情况下，仍会连接失败，同时会弹出报错：Cannot connect to host discord.com:443
-目前建议您在使用时打开Tun模式，这里提供Discord.py里的解决方式：[#5880](https://github.com/Rapptz/discord.py/issues/5880)，[#4159](https://github.com/Rapptz/discord.py/issues/4159)
-
-2.由于discord的emoji的格式问题，麦麦接受到消息后会认为这是一段文字而非一个emoji，因此建议配合使用discord_emoji_enhance_plugin使用
-
-3.关于头像发送时机未知，已知仅此discord_bot自身头像
 
 ## 特别鸣谢
 
