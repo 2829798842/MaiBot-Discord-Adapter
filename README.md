@@ -216,6 +216,8 @@ linux系统
 export http_proxy=http://127.0.0.1:7890
 export https_proxy=http://127.0.0.1:7890
 ```
+如果仍出现上述问题，请尝试开启tun模式或者换用更稳定的vpn
+
 
 ## 特别鸣谢
 
