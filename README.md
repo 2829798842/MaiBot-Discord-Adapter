@@ -201,7 +201,21 @@ uv run python main.py
 python .\main.py
 ```
 
+## 常见问题解决
+遇到**"Cannot connect to host discord.com:443 ssl:default"**:
+遇到这个问题可能是您的代理出现问题
+#### 解决方案
+windows系统
+```
+set http_proxy=socks5://127.0.0.1:7890
+set https_proxy=socks5://127.0.0.1:7890
+```(端口为你的代理配置的端口)
 
+linux系统
+```
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+```
 
 ## 特别鸣谢
 
