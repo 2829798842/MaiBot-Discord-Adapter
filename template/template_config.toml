@@ -1,16 +1,15 @@
 [inner]
-version = "0.0.1" # 版本号
+version = "0.1.2" # 版本号
 # 请勿修改版本号，除非你知道自己在做什么
 
 [discord] # Discord Bot 设置
 token = "your_discord_bot_token_"
 
-[chat]
+[chat] # 黑白名单功能
 # 获取服务器 ID：右键点击服务器名称 -> 复制服务器 ID
 # 获取频道 ID：右键点击频道名称 -> 复制频道 ID
 # 获取用户 ID：右键点击用户头像 -> 复制用户 ID
 # 注意：需要开启 Discord 开发者模式（用户设置 -> 高级 -> 开发者模式）
-
 guild_list_type = "blacklist" # 服务器名单类型，可选为：whitelist, blacklist
 guild_list = []               # 服务器名单
 # 当 guild_list_type 为 whitelist 时，只有服务器名单中的服务器可以使用 Bot
@@ -19,10 +18,33 @@ channel_list_type = "blacklist" # 频道名单类型，可选为：whitelist, bl
 channel_list = []               # 频道名单
 # 当 channel_list_type 为 whitelist 时，只有频道名单中的频道可以使用 Bot
 # 当 channel_list_type 为 blacklist 时，频道名单中的任何频道无法使用 Bot
+thread_list_type = "blacklist" # 子区名单类型，可选为：whitelist, blacklist
+thread_list = []               # 子区名单
+# 当 thread_list_type 为 whitelist 时，只有子区名单中的子区可以使用 Bot
+# 当 thread_list_type 为 blacklist 时，子区名单中的任何子区无法使用 Bot
+
 user_list_type = "blacklist"  # 用户名单类型，可选为：whitelist, blacklist
 user_list = []                # 用户名单
 # 当 user_list_type 为 whitelist 时，只有用户名单中的用户可以使用 Bot
 # 当 user_list_type 为 blacklist 时，用户名单中的任何用户无法使用 Bot
+
+# 子区相关设置
+allow_thread_interaction = true  # 是否允许子区交互，设为 false 可全局禁用子区功能
+inherit_channel_permissions = true  # 子区是否继承父频道权限
+inherit_channel_memory = true  # 子区是否继承父频道记忆，设为 true 时子区与父频道共享聊天记录和记忆
+# 注意：inherit_channel_memory 设为 true 时：
+#   - 子区消息会使用父频道ID作为群组ID，与父频道共享记忆和上下文
+#   - MaiBot Core 看到的是统一的频道对话，能够跨子区理解话题
+#   - 回复消息时会智能识别原始子区，确保消息发送到正确的位置
+#   - 在群组名称中会显示当前所在的子区信息，帮助AI理解对话位置
+# 当 inherit_channel_permissions 为 true 时：
+#   - 子区继承其父频道的权限配置（推荐设置）
+#   - 只要父频道允许交互，子区也允许交互
+#   - 忽略下方的 thread_list_type 和 thread_list 设置
+# 当 inherit_channel_permissions 为 false 时：
+#   - 子区使用独立的黑白名单配置
+#   - 需要单独配置 thread_list_type 和 thread_list
+#   - 如果子区不在允许列表中，将完全不处理子区消息
 
 [maibot_server] # 连接 MaiBot Core 的服务设置
 host = "127.0.0.1" # MaiBot Core 主机地址
@@ -30,7 +52,7 @@ port = 8000        # MaiBot Core 端口
 platform_name = "discord_bot_instance_1" # 平台标识符，目前仅作为标记使用，不同实例请勿重复
 
 [debug]
-level = "INFO" # 日志等级（DEBUG, INFO, WARNING, ERROR, CRITICAL）
+level = "DEBUG" # 日志等级（DEBUG, INFO, WARNING, ERROR, CRITICAL）
 log_file = "logs/discord_adapter.log" # 日志文件路径
 
 # Discord 权限意图设置
@@ -42,6 +64,6 @@ message_content = true
 
 # Discord 连接重试设置
 [discord.retry]
-max_retries = 3    # 最大重试次数
-retry_delay = 5    # 重试间隔（秒）
-timeout = 30       # 连接超时（秒）
+max_retries = 36                  # 最大重试次数
+retry_delay = 5                  # 重试间隔（秒）
+connection_check_interval = 30   # 连接状态检查间隔（秒）
