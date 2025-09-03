@@ -84,7 +84,7 @@ class DiscordMessageHandler:
 
             # 构造用户信息
             # 获取各种用户名称信息
-            username = message.author.name  # Discord用户名（如: john_doe）
+            username = message.author.name  # Discord用户名
             display_name = message.author.display_name  # 显示名称（全局昵称或用户名）
             # 服务器昵称
             server_nickname = (getattr(message.author, 'nick', None)
@@ -114,19 +114,40 @@ class DiscordMessageHandler:
             # 构造群组信息（如果是服务器消息）
             group_info = None
             if message.guild:
-                # 使用频道作为群组，这样可以精确定位回复位置
-                # 格式: 频道名称 @ 服务器名称
-                channel_name = (message.channel.name if hasattr(message.channel, 'name')
-                              else f"频道{message.channel.id}")
-                group_name = f"{channel_name} @ {message.guild.name}"
+                # 检查是否为Thread消息
+                is_thread_message = hasattr(message.channel, 'parent') and message.channel.parent is not None
+                
+                if is_thread_message:
+                    # Thread消息：使用Thread作为群组，包含父频道信息
+                    thread_name = message.channel.name
+                    parent_channel_name = (message.channel.parent.name 
+                                         if hasattr(message.channel.parent, 'name') 
+                                         else f"频道{message.channel.parent.id}")
+                    # 格式: 子区名称 [父频道名称] @ 服务器名称
+                    group_name = f"{thread_name} [{parent_channel_name}] @ {message.guild.name}"
+                    
+                    group_info = GroupInfo(
+                        platform=global_config.maibot_server.platform_name,
+                        group_id=str(message.channel.id),  # 使用Thread ID作为群组ID
+                        group_name=group_name
+                    )
+                    logger.debug(f"群组信息 (子区): {group_info.group_name} (ID: {group_info.group_id})")
+                    logger.debug(f"父频道信息: {parent_channel_name} (ID: {message.channel.parent.id})")
+                    logger.debug(f"服务器信息: {message.guild.name} (ID: {message.guild.id})")
+                else:
+                    # 普通频道消息：使用频道作为群组
+                    channel_name = (message.channel.name if hasattr(message.channel, 'name')
+                                  else f"频道{message.channel.id}")
+                    # 格式: 频道名称 @ 服务器名称
+                    group_name = f"{channel_name} @ {message.guild.name}"
 
-                group_info = GroupInfo(
-                    platform=global_config.maibot_server.platform_name,
-                    group_id=str(message.channel.id),  # 使用频道ID作为群组ID
-                    group_name=group_name
-                )
-                logger.debug(f"群组信息 (频道): {group_info.group_name} (ID: {group_info.group_id})")
-                logger.debug(f"服务器信息: {message.guild.name} (ID: {message.guild.id})")
+                    group_info = GroupInfo(
+                        platform=global_config.maibot_server.platform_name,
+                        group_id=str(message.channel.id),  # 使用频道ID作为群组ID
+                        group_name=group_name
+                    )
+                    logger.debug(f"群组信息 (频道): {group_info.group_name} (ID: {group_info.group_id})")
+                    logger.debug(f"服务器信息: {message.guild.name} (ID: {message.guild.id})")
             else:
                 logger.debug("私聊消息，无群组信息")
 
@@ -166,7 +187,7 @@ class DiscordMessageHandler:
                         message_segments.append(Seg(type="image", data=image_base64))
                         content_formats.append("image")
                         logger.debug(f"处理图片附件: {attachment.filename}")
-                    except Exception as e:
+                    except (discord.HTTPException, discord.NotFound, OSError) as e:
                         logger.error(f"处理图片附件失败: {e}")
                 else:
                     logger.debug(f"跳过非图片附件: {attachment.filename} ({attachment.content_type})")
@@ -188,7 +209,7 @@ class DiscordMessageHandler:
                             if message_segments and message_segments[-1].type == "text":
                                 message_segments[-1].data += f" {sticker_text}"
                         logger.debug(f"处理Discord贴纸: {sticker.name}")
-                except Exception as e:
+                except (AttributeError, TypeError) as e:
                     logger.error(f"处理Discord贴纸失败: {e}")
 
             # 处理Discord reactions（表情反应）
@@ -454,8 +475,6 @@ class DiscordMessageHandler:
 
     async def _get_reply_context(self, message: discord.Message) -> str | None:
         """获取回复上下文信息，格式化为易读文本
-        
-        借鉴QQ适配器的处理方式，将回复信息格式化为类似
         "[回复<用户名:用户ID>：被回复内容]，说："的格式。
         
         Args:
@@ -509,7 +528,7 @@ class DiscordMessageHandler:
             logger.debug(f"格式化回复上下文: {reply_text}")
             return reply_text
 
-        except Exception as e:
+        except (AttributeError, TypeError, ValueError) as e:
             logger.error(f"处理回复上下文时发生错误: {e}")
             return f"[回复消息{message.reference.message_id}]，说："
 

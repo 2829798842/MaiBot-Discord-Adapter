@@ -257,21 +257,44 @@ class DiscordSendHandler:
             message_info = maim_message.message_info
 
             if message_info.group_info:
-                # 服务器消息，group_id 现在是频道ID
-                channel_id = int(message_info.group_info.group_id)
+                # 服务器消息，group_id 可能是频道ID或Thread ID
+                target_id = int(message_info.group_info.group_id)
 
                 # 优先从缓存获取
-                channel = self._channel_cache.get(channel_id)
+                channel = self._channel_cache.get(target_id)
                 if not channel:
-                    channel = discord_client.client.get_channel(channel_id)
+                    channel = discord_client.client.get_channel(target_id)
                     if channel:
-                        self._cache_channel(channel_id, channel)
+                        self._cache_channel(target_id, channel)
 
-                if channel and isinstance(channel, discord.TextChannel):
+                # 检查是否为Thread
+                if channel and hasattr(channel, 'parent') and channel.parent is not None:
+                    # 这是一个Thread
+                    if isinstance(channel, discord.Thread):
+                        # 检查Thread权限
+                        bot_permissions = channel.permissions_for(channel.guild.me)
+                        if not bot_permissions.send_messages_in_threads:
+                            logger.warning(f"没有权限在子区 {channel.name} (ID: {target_id}) 发送消息")
+                            return None
+
+                        thread_name = channel.name
+                        parent_channel_name = channel.parent.name
+                        guild_name = channel.guild.name
+                        logger.debug(
+                            f"找到目标子区: {thread_name} (ID: {channel.id}) "
+                            f"父频道: {parent_channel_name} 在服务器 {guild_name}"
+                        )
+                        return channel
+                    else:
+                        logger.warning(f"频道 {target_id} 不是有效的Thread")
+                        return None
+
+                elif channel and isinstance(channel, discord.TextChannel):
+                    # 这是一个普通频道
                     # 检查是否有发送权限
                     bot_permissions = channel.permissions_for(channel.guild.me)
                     if not bot_permissions.send_messages:
-                        logger.warning(f"没有权限在频道 {channel.name} (ID: {channel_id}) 发送消息")
+                        logger.warning(f"没有权限在频道 {channel.name} (ID: {target_id}) 发送消息")
                         return None
 
                     # 检查是否需要嵌入链接权限（用于发送文件）
@@ -286,25 +309,36 @@ class DiscordSendHandler:
                     )
                     return channel
                 else:
-                    logger.warning(f"找不到频道 {channel_id} 或频道类型不正确")
+                    logger.warning(f"找不到频道/子区 {target_id} 或类型不正确")
 
                     try:
-                        channel = await discord_client.client.fetch_channel(channel_id)
-                        if isinstance(channel, discord.TextChannel):
-                            if channel.permissions_for(channel.guild.me).send_messages:
-                                logger.debug(f"从API获取到频道: {channel.name} (ID: {channel.id})")
-                                self._cache_channel(channel_id, channel)  # 缓存新获取的频道
+                        channel = await discord_client.client.fetch_channel(target_id)
+                        
+                        if isinstance(channel, discord.Thread):
+                            # 获取到Thread
+                            bot_permissions = channel.permissions_for(channel.guild.me)
+                            if bot_permissions.send_messages_in_threads:
+                                logger.debug(f"从API获取到子区: {channel.name} (ID: {channel.id})")
+                                self._cache_channel(target_id, channel)
                                 return channel
                             else:
-                                logger.warning(f"没有权限在频道 {channel.name} (ID: {channel_id}) 发送消息")
+                                logger.warning(f"没有权限在子区 {channel.name} (ID: {target_id}) 发送消息")
+                        elif isinstance(channel, discord.TextChannel):
+                            # 获取到普通频道
+                            if channel.permissions_for(channel.guild.me).send_messages:
+                                logger.debug(f"从API获取到频道: {channel.name} (ID: {channel.id})")
+                                self._cache_channel(target_id, channel)
+                                return channel
+                            else:
+                                logger.warning(f"没有权限在频道 {channel.name} (ID: {target_id}) 发送消息")
                         else:
-                            logger.warning(f"频道 {channel_id} 不是文本频道")
+                            logger.warning(f"目标 {target_id} 不是文本频道或子区")
                     except discord.NotFound:
-                        logger.error(f"频道 {channel_id} 不存在")
+                        logger.error(f"频道/子区 {target_id} 不存在")
                     except discord.Forbidden:
-                        logger.error(f"没有权限访问频道 {channel_id}")
+                        logger.error(f"没有权限访问频道/子区 {target_id}")
                     except discord.HTTPException as e:
-                        logger.error(f"获取频道时发生错误: {e}")
+                        logger.error(f"获取频道/子区时发生错误: {e}")
 
             else:
                 # 私聊消息
@@ -331,7 +365,7 @@ class DiscordSendHandler:
                     try:
                         user = await discord_client.client.fetch_user(user_id)
                         logger.debug(f"从API获取到用户: {user.display_name} (ID: {user.id})")
-                        self._cache_user(user_id, user)  # 缓存新获取的用户
+                        self._cache_user(user_id, user)
                         return await user.create_dm()
                     except discord.NotFound:
                         logger.warning(f"用户 {user_id} 不存在")

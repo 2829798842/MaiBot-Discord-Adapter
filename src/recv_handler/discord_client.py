@@ -7,7 +7,6 @@ import traceback
 import discord
 from ..logger import logger
 from ..config import global_config, is_user_allowed
-from ..background_tasks import background_task_manager
 
 
 class DiscordClientManager:
@@ -26,7 +25,6 @@ class DiscordClientManager:
         self.client = None
         self.message_queue = asyncio.Queue()
         self.is_connected = False
-        self.connection_attempts = 0
         self.is_shutting_down = False
         self._setup_client()
 
@@ -48,13 +46,8 @@ class DiscordClientManager:
             f"dm_messages={intents.dm_messages}, message_content={intents.message_content}"
         )
 
-        # 设置代理（如果配置了）
-        proxy = getattr(global_config.discord, 'proxy_url', None)
-        if proxy:
-            logger.info(f"使用代理连接Discord: {proxy}")
-            self.client = discord.Client(intents=intents, proxy=proxy)
-        else:
-            self.client = discord.Client(intents=intents)
+        # 创建 Discord 客户端
+        self.client = discord.Client(intents=intents)
 
         # 使用装饰器方式注册事件处理器
         @self.client.event
@@ -85,7 +78,6 @@ class DiscordClientManager:
         当 Discord 客户端连接成功并准备就绪时调用
         """
         self.is_connected = True
-        self.connection_attempts = 0  # 重置重连计数
         logger.info(f"Discord 客户端已连接: {self.client.user}")
         logger.info(f"Bot 已加入 {len(self.client.guilds)} 个服务器")
 
@@ -96,15 +88,6 @@ class DiscordClientManager:
             text_channels = guild.text_channels[:3]  # 只显示前3个频道
             for channel in text_channels:
                 logger.debug(f"  - 频道: {channel.name} (ID: {channel.id})")
-
-        # 启动后台监控任务（延迟启动，确保连接完全建立）
-        try:
-            connection_monitor = background_task_manager.connection_monitor
-            if not connection_monitor or not connection_monitor.is_running:
-                background_task_manager.start_all_tasks()
-                logger.info("后台监控任务已启动")
-        except (AttributeError, RuntimeError) as e:
-            logger.error(f"启动后台监控任务失败: {e}")
 
         logger.info("Discord 客户端准备就绪，等待消息事件...")
 
@@ -126,7 +109,6 @@ class DiscordClientManager:
     async def _on_resume(self):
         """Discord 客户端重新连接事件处理器"""
         self.is_connected = True
-        self.connection_attempts = 0  # 重置重连计数
         logger.info("Discord 客户端连接已恢复")
 
     async def _on_message(self, message: discord.Message):
@@ -159,11 +141,27 @@ class DiscordClientManager:
             # 检查黑白名单
             guild_id = message.guild.id if message.guild else None
             channel_id = message.channel.id
+            
+            # 检查是否为子区消息
+            is_thread_message = hasattr(message.channel, 'parent') and message.channel.parent is not None
+            thread_id = None
+            
+            if is_thread_message:
+                thread_id = message.channel.id  # 子区ID
+                # 对于子区消息，如果继承父频道权限，则使用父频道ID进行权限检查
+                if global_config.chat.inherit_channel_permissions:
+                    channel_id = message.channel.parent.id if message.channel.parent else channel_id
+                    logger.debug(f"子区消息继承父频道权限: 子区ID={thread_id}, 父频道ID={channel_id}")
+                else:
+                    logger.debug(f"子区消息使用独立权限: 子区ID={thread_id}")
 
-            logger.debug(f"权限检查: 用户ID={message.author.id}, 服务器ID={guild_id}, 频道ID={channel_id}")
+            logger.debug(f"权限检查: 用户ID={message.author.id}, 服务器ID={guild_id}, 频道ID={channel_id}, 子区ID={thread_id}, 是否子区={is_thread_message}")
 
-            if not is_user_allowed(global_config, message.author.id, guild_id, channel_id):
-                logger.warning(f"用户 {message.author.id} 或频道 {channel_id} 不在允许列表中，忽略消息")
+            if not is_user_allowed(global_config, message.author.id, guild_id, channel_id, thread_id, is_thread_message):
+                if is_thread_message:
+                    logger.warning(f"用户 {message.author.id} 或子区 {thread_id} 不在允许列表中，忽略消息")
+                else:
+                    logger.warning(f"用户 {message.author.id} 或频道 {channel_id} 不在允许列表中，忽略消息")
                 return
 
             # 将消息放入队列等待处理
@@ -173,6 +171,20 @@ class DiscordClientManager:
         except (AttributeError, TypeError, RuntimeError) as e:
             logger.error(f"处理 Discord 消息时发生错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
+
+    async def _reset_client(self):
+        """
+        重置客户端连接
+        """
+        # 关闭现有连接
+        if self.client and not self.client.is_closed():
+            await self.client.close()
+
+        # 重新创建客户端
+        self._setup_client()
+        
+        # 标记为未连接
+        self.is_connected = False
 
     async def start(self):
         """启动 Discord 客户端
@@ -195,20 +207,27 @@ class DiscordClientManager:
                     # 等待重试间隔
                     await asyncio.sleep(retry_delay)
 
-                    # 重新创建客户端（避免连接状态问题）
-                    if self.client and not self.client.is_closed():
-                        await self.client.close()
+                    # 重置客户端（避免连接状态问题）
+                    await self._reset_client()
 
-                    self._setup_client()
-
-                # 启动客户端（这是持续运行的任务）
+                # 直接启动客户端，让background_tasks处理连接监控
+                logger.debug("开始尝试连接到Discord...")
                 await self.client.start(global_config.discord.token)
 
-                # 如果到这里说明连接断开了，不为成功启动
+                # 如果执行到这里，说明连接断开了
                 logger.warning("Discord 客户端连接意外断开")
+                break  # 正常断开不需要重试
 
-            except (discord.LoginFailure, discord.HTTPException,
-                   ConnectionError, TimeoutError) as e:
+            except (discord.LoginFailure, discord.HTTPException) as e:
+                last_error = str(e)
+                logger.warning(f"第 {attempt + 1} 次尝试失败: {last_error}")
+
+                # 检查是否是Token错误
+                if "login" in str(e).lower() or "token" in str(e).lower() or "unauthorized" in str(e).lower():
+                    logger.error("Token 相关错误，请检查 Discord Bot Token 是否正确")
+                    break  # Token 错误不需要重试
+
+            except (ConnectionError, TimeoutError, OSError) as e:
                 last_error = str(e)
                 logger.warning(f"第 {attempt + 1} 次尝试失败: {last_error}")
 
@@ -219,12 +238,16 @@ class DiscordClientManager:
                     logger.warning("检测到SSL错误，可能是证书问题或网络拦截")
                 elif "name resolution" in str(e).lower() or "dns" in str(e).lower():
                     logger.warning("检测到DNS解析问题，可能是网络拦截或DNS污染")
-                elif "login" in str(e).lower() or "token" in str(e).lower():
-                    logger.error("Token 相关错误，请检查 Discord Bot Token 是否正确")
-                    break  # Token 错误不需要重试
+
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"第 {attempt + 1} 次尝试时发生未知错误: {last_error}")
 
         # 所有重试都失败了
-        error_msg = f"Discord 客户端启动失败，已重试 {max_retries} 次。最后错误: {last_error}"
+        if last_error:
+            error_msg = f"Discord 客户端启动失败，已重试 {max_retries} 次。最后错误: {last_error}"
+        else:
+            error_msg = f"Discord 客户端启动失败，已重试 {max_retries} 次。"
         logger.error(error_msg)
         raise Exception(error_msg)
 
@@ -236,6 +259,72 @@ class DiscordClientManager:
         if self.client and not self.client.is_closed():
             await self.client.close()
             logger.info("Discord 客户端已关闭")
+
+    async def force_reconnect(self):
+        """强制重连Discord客户端
+        
+        由background_tasks调用，用于处理连接断开的情况
+        """
+        if self.is_shutting_down:
+            logger.debug("系统正在关闭，跳过重连")
+            return
+
+        logger.info("强制重连Discord客户端...")
+        try:
+            # 标记为未连接
+            self.is_connected = False
+            
+            # 关闭现有连接
+            if self.client and not self.client.is_closed():
+                await self.client.close()
+                logger.info("Discord客户端连接已断开")
+            
+            # 等待一小段时间确保连接完全关闭
+            await asyncio.sleep(2)
+            
+            # 重新创建并启动客户端
+            await self._reset_client()
+            logger.info("Discord客户端已重置，尝试重新连接...")
+            
+            # 启动新的连接（异步进行，不阻塞监控任务）
+            asyncio.create_task(self._reconnect_client())
+            
+        except Exception as e:
+            logger.error(f"强制重连时发生错误: {e}")
+            self.is_connected = False
+
+    async def _reconnect_client(self):
+        """异步重连客户端"""
+        try:
+            # 获取重试配置
+            retry_config = global_config.discord.retry
+            max_retries = min(retry_config.get('max_retries', 3), 5)  # 限制重连时的重试次数
+            retry_delay = retry_config.get('retry_delay', 5)
+            
+            for attempt in range(max_retries):
+                if self.is_shutting_down:
+                    logger.debug("系统正在关闭，停止重连尝试")
+                    return
+                    
+                try:
+                    if attempt > 0:
+                        logger.info(f"第 {attempt} 次重连尝试...")
+                        await asyncio.sleep(retry_delay)
+                        
+                    # 使用新的客户端实例进行连接
+                    await self.client.start(global_config.discord.token)
+                    logger.info("Discord客户端重连成功")
+                    return
+                    
+                except Exception as e:
+                    logger.warning(f"第 {attempt + 1} 次重连失败: {e}")
+                    if attempt < max_retries - 1:
+                        continue
+                    else:
+                        logger.error(f"重连失败，已重试 {max_retries} 次")
+                        
+        except Exception as e:
+            logger.error(f"重连过程中发生错误: {e}")
 
     async def get_channel(self, channel_id: int) -> discord.abc.Messageable | None:
         """获取频道对象

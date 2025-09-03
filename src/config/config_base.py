@@ -15,22 +15,32 @@ class ChatConfig:
         guild_list (List[int]): 服务器名单
         channel_list_type (str): 频道名单类型（whitelist, blacklist）
         channel_list (List[int]): 频道名单
+        thread_list_type (str): 子区名单类型（whitelist, blacklist）
+        thread_list (List[int]): 子区名单
         user_list_type (str): 用户名单类型（whitelist, blacklist）
         user_list (List[int]): 用户名单
+        allow_thread_interaction (bool): 是否允许子区交互
+        inherit_channel_permissions (bool): 子区是否继承父频道权限
     """
 
     guild_list_type: str = "whitelist"
     guild_list: List[int] = None
     channel_list_type: str = "whitelist"
     channel_list: List[int] = None
+    thread_list_type: str = "whitelist"
+    thread_list: List[int] = None
     user_list_type: str = "whitelist"
     user_list: List[int] = None
+    allow_thread_interaction: bool = True
+    inherit_channel_permissions: bool = True
 
     def __post_init__(self):
         if self.guild_list is None:
             self.guild_list = []
         if self.channel_list is None:
             self.channel_list = []
+        if self.thread_list is None:
+            self.thread_list = []
         if self.user_list is None:
             self.user_list = []
 

@@ -8,12 +8,14 @@ token = "your_discord_bot_token_"
 [chat] # 黑白名单功能
 # 获取服务器 ID：右键点击服务器名称 -> 复制服务器 ID
 # 获取频道 ID：右键点击频道名称 -> 复制频道 ID
+# 获取子区 ID：右键点击子区名称 -> 复制子区 ID
 # 获取用户 ID：右键点击用户头像 -> 复制用户 ID
 # 注意：需要开启 Discord 开发者模式（用户设置 -> 高级 -> 开发者模式）
 guild_list_type = "blacklist" # 服务器名单类型，可选为：whitelist, blacklist
 guild_list = []               # 服务器名单
 # 当 guild_list_type 为 whitelist 时，只有服务器名单中的服务器可以使用 Bot
 # 当 guild_list_type 为 blacklist 时，服务器名单中的任何服务器无法使用 Bot
+
 channel_list_type = "blacklist" # 频道名单类型，可选为：whitelist, blacklist
 channel_list = []               # 频道名单
 # 当 channel_list_type 为 whitelist 时，只有频道名单中的频道可以使用 Bot
