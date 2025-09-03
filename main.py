@@ -166,6 +166,9 @@ async def run_adapter():
     try:
         # 设置消息处理器的路由器
         message_handler.router = router
+        
+        # 设置消息处理器和发送处理器的相互引用（用于子区上下文映射）
+        message_handler.send_handler = send_handler
 
         # 注册 MaiBot 消息处理器
         router.register_class_handler(send_handler.handle_message)

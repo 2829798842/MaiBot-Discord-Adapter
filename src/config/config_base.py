@@ -21,6 +21,7 @@ class ChatConfig:
         user_list (List[int]): 用户名单
         allow_thread_interaction (bool): 是否允许子区交互
         inherit_channel_permissions (bool): 子区是否继承父频道权限
+        inherit_channel_memory (bool): 子区是否继承父频道记忆
     """
 
     guild_list_type: str = "whitelist"
@@ -33,6 +34,7 @@ class ChatConfig:
     user_list: List[int] = None
     allow_thread_interaction: bool = True
     inherit_channel_permissions: bool = True
+    inherit_channel_memory: bool = True
 
     def __post_init__(self):
         if self.guild_list is None:
