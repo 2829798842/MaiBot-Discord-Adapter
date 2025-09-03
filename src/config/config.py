@@ -47,7 +47,8 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
             user_list_type=chat_config.get('user_list_type', 'whitelist'),
             user_list=chat_config.get('user_list', []),
             allow_thread_interaction=chat_config.get('allow_thread_interaction', True),
-            inherit_channel_permissions=chat_config.get('inherit_channel_permissions', True)
+            inherit_channel_permissions=chat_config.get('inherit_channel_permissions', True),
+            inherit_channel_memory=chat_config.get('inherit_channel_memory', True)
         )
 
         # 加载 MaiBot 服务器配置

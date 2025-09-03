@@ -11,6 +11,7 @@ import discord
 from maim_message import MessageBase, Seg
 from .logger import logger
 from .recv_handler.discord_client import discord_client
+from .config import global_config
 
 MAX_MESSAGE_LENGTH = 2000
 
@@ -22,12 +23,14 @@ class DiscordSendHandler:
     Attributes:
         _channel_cache: 频道缓存字典，提高获取效率
         _user_cache: 用户缓存字典，提高获取效率
+        _thread_context_map: 子区上下文映射，记录父频道到活跃子区的映射
     """
 
     def __init__(self):
         """初始化Discord发送处理器"""
         self._channel_cache = {}  # 频道缓存
         self._user_cache = {}     # 用户缓存
+        self._thread_context_map = {}  # 子区上下文映射 {parent_channel_id: thread_id}
 
     def _cache_channel(self, channel_id: int, channel: discord.abc.Messageable):
         """缓存频道对象
@@ -46,6 +49,41 @@ class DiscordSendHandler:
             user: Discord用户对象
         """
         self._user_cache[user_id] = user
+
+    def update_thread_context(self, parent_channel_id: str, thread_id: str):
+        """更新子区上下文映射
+        
+        记录父频道到活跃子区的映射关系，用于后续回复路由
+        
+        Args:
+            parent_channel_id: 父频道ID
+            thread_id: 子区ID  
+        """
+        self._thread_context_map[parent_channel_id] = thread_id
+        logger.debug(f"更新子区上下文映射: {parent_channel_id} -> {thread_id}")
+
+    def clear_thread_context(self, parent_channel_id: str):
+        """清除父频道的子区上下文映射
+        
+        当用户直接在父频道发消息时，清除子区映射以确保回复发送到父频道
+        
+        Args:
+            parent_channel_id: 父频道ID
+        """
+        if parent_channel_id in self._thread_context_map:
+            old_thread_id = self._thread_context_map.pop(parent_channel_id)
+            logger.debug(f"清除子区上下文映射: {parent_channel_id} (之前映射到 {old_thread_id})")
+
+    def get_active_thread(self, parent_channel_id: str) -> str | None:
+        """获取父频道的活跃子区ID
+        
+        Args:
+            parent_channel_id: 父频道ID
+            
+        Returns:
+            str | None: 活跃子区ID，如果没有则返回None
+        """
+        return self._thread_context_map.get(parent_channel_id)
 
     async def handle_message(self, message_dict: dict):
         """处理来自 MaiBot Core 的消息
@@ -260,12 +298,74 @@ class DiscordSendHandler:
                 # 服务器消息，group_id 可能是频道ID或Thread ID
                 target_id = int(message_info.group_info.group_id)
 
-                # 优先从缓存获取
+                # 首先检查消息中是否包含子区路由信息
+                thread_routing_info = self._extract_thread_routing_info(maim_message.message_segment)
+                if thread_routing_info:
+                    # 如果有子区路由信息，优先使用子区作为目标
+                    thread_id = int(thread_routing_info["original_thread_id"])
+                    thread_channel = discord_client.client.get_channel(thread_id)
+                    if thread_channel and isinstance(thread_channel, discord.Thread):
+                        logger.debug(f"使用子区路由信息发送到子区: {thread_channel.name} (ID: {thread_id})")
+                        return thread_channel
+                    else:
+                        logger.warning(f"子区路由目标无效，回退到父频道: {thread_id}")
+
+                # 如果没有路由信息但启用了记忆继承，检查上下文映射
+                if global_config.chat.inherit_channel_memory:
+                    active_thread_id = self.get_active_thread(str(target_id))
+                    if active_thread_id:
+                        # 检查是否有回复信息，如果回复的是子区消息，才使用子区路由
+                        reply_message_id = self._extract_reply_message_id(maim_message.message_segment)
+                        should_use_thread = True
+                        
+                        if reply_message_id:
+                            # 如果有回复，检查被回复的消息是否在子区中
+                            try:
+                                # 尝试在父频道中查找被回复的消息
+                                parent_channel = discord_client.client.get_channel(target_id)
+                                if parent_channel:
+                                    try:
+                                        await parent_channel.fetch_message(int(reply_message_id))
+                                        # 如果在父频道找到了被回复的消息，说明应该回复到父频道
+                                        should_use_thread = False
+                                        logger.debug(f"回复的消息在父频道中，回复到父频道: {reply_message_id}")
+                                    except discord.NotFound:
+                                        # 在父频道找不到，可能在子区中，继续使用子区路由
+                                        logger.debug(f"回复的消息不在父频道中，使用子区路由: {reply_message_id}")
+                            except Exception as e:
+                                logger.debug(f"检查回复消息位置时出错，使用默认子区路由: {e}")
+                        
+                        if should_use_thread:
+                            thread_channel = discord_client.client.get_channel(int(active_thread_id))
+                            if thread_channel and isinstance(thread_channel, discord.Thread):
+                                logger.debug(f"使用上下文映射发送到活跃子区: {thread_channel.name} (ID: {active_thread_id})")
+                                return thread_channel
+                            else:
+                                logger.warning(f"映射的子区无效，清除映射: {active_thread_id}")
+                                # 清除无效映射
+                                if str(target_id) in self._thread_context_map:
+                                    del self._thread_context_map[str(target_id)]
+
+                # 检查是否有回复信息，如果有回复且启用了记忆继承，可能需要找到原始子区
+                reply_message_id = self._extract_reply_message_id(maim_message.message_segment)
+                original_thread_channel = None
+                
+                if reply_message_id and global_config.chat.inherit_channel_memory:
+                    # 如果有回复消息且启用记忆继承，尝试找到原始消息所在的子区
+                    original_thread_channel = await self._find_thread_by_message_id(reply_message_id, target_id)
+                    if original_thread_channel:
+                        logger.debug(f"通过回复消息找到原始子区: {original_thread_channel.name} (ID: {original_thread_channel.id})")
+
+                # 优先从缓存获取目标频道
                 channel = self._channel_cache.get(target_id)
                 if not channel:
                     channel = discord_client.client.get_channel(target_id)
                     if channel:
                         self._cache_channel(target_id, channel)
+
+                # 如果找到了原始子区，优先使用子区
+                if original_thread_channel:
+                    return original_thread_channel
 
                 # 检查是否为Thread
                 if channel and hasattr(channel, 'parent') and channel.parent is not None:
@@ -398,6 +498,11 @@ class DiscordSendHandler:
             Args:
                 seg: 要处理的消息段
             """
+            # 跳过路由信息段，不作为消息内容处理
+            if seg.type == "thread_context":
+                logger.debug("跳过子区路由信息段")
+                return
+                
             if seg.type == "text":
                 content_parts.append(str(seg.data))
             elif seg.type == "mention":
@@ -583,6 +688,35 @@ class DiscordSendHandler:
 
         return extract_from_segment(message_segment)
 
+    def _extract_thread_routing_info(self, message_segment: Seg) -> dict | None:
+        """提取子区路由信息
+        
+        从消息段中递归查找 thread_context 类型的段，并提取其中的路由信息。
+        
+        Args:
+            message_segment: MaiBot消息段对象
+            
+        Returns:
+            dict | None: 子区路由信息字典，找不到时返回None
+        """
+        def extract_from_segment(seg: Seg) -> dict | None:
+            if seg.type == "thread_context":
+                # 找到子区上下文信息
+                if isinstance(seg.data, dict):
+                    logger.debug(f"找到子区路由信息: {seg.data}")
+                    return seg.data
+                else:
+                    logger.warning(f"子区路由信息格式错误: {seg.data}")
+                    return None
+            elif seg.type == "seglist" and isinstance(seg.data, list):
+                for sub_seg in seg.data:
+                    result = extract_from_segment(sub_seg)
+                    if result:
+                        return result
+            return None
+
+        return extract_from_segment(message_segment)
+
     def _process_mention_segment(self, mention_data: dict) -> str:
         """处理mention段，转换为Discord提及格式
         
@@ -666,6 +800,62 @@ class DiscordSendHandler:
         except (AttributeError, IndexError) as e:
             logger.error(f"检测图片格式时发生错误: {e}")
             return 'unknown'
+
+    async def _find_thread_by_message_id(self, message_id: str, parent_channel_id: int) -> discord.Thread | None:
+        """通过消息ID找到消息所在的子区
+        
+        Args:
+            message_id: 要查找的消息ID
+            parent_channel_id: 父频道ID
+            
+        Returns:
+            discord.Thread | None: 找到的子区，未找到时返回None
+        """
+        try:
+            message_id_int = int(message_id)
+            
+            # 先获取父频道
+            parent_channel = discord_client.client.get_channel(parent_channel_id)
+            if not isinstance(parent_channel, discord.TextChannel):
+                return None
+            
+            # 遍历父频道的所有活跃子区
+            for thread in parent_channel.threads:
+                try:
+                    # 尝试在子区中查找消息
+                    message = await thread.fetch_message(message_id_int)
+                    if message:
+                        logger.debug(f"在子区 {thread.name} 中找到消息 {message_id}")
+                        return thread
+                except (discord.NotFound, discord.Forbidden):
+                    # 消息不在这个子区中，继续查找
+                    continue
+                except discord.HTTPException:
+                    # 其他HTTP错误，继续查找
+                    continue
+            
+            # 如果在活跃子区中没找到，尝试获取归档的子区
+            try:
+                archived_threads = [thread async for thread in parent_channel.archived_threads(limit=50)]
+                for thread in archived_threads:
+                    try:
+                        message = await thread.fetch_message(message_id_int)
+                        if message:
+                            logger.debug(f"在归档子区 {thread.name} 中找到消息 {message_id}")
+                            return thread
+                    except (discord.NotFound, discord.Forbidden):
+                        continue
+                    except discord.HTTPException:
+                        continue
+            except discord.HTTPException:
+                logger.debug("无法访问归档子区")
+            
+            logger.debug(f"未能在父频道 {parent_channel_id} 的子区中找到消息 {message_id}")
+            return None
+            
+        except (ValueError, AttributeError) as e:
+            logger.error(f"查找子区时发生错误: {e}")
+            return None
 
 
 # 创建全局发送处理器实例

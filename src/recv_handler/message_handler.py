@@ -19,11 +19,13 @@ class DiscordMessageHandler:
     
     Attributes:
         router: MaiBot 消息路由器（在 main.py 中设置）
+        send_handler: Discord 发送处理器引用，用于更新上下文映射
     """
 
     def __init__(self):
         """初始化消息处理器"""
         self.router = None
+        self.send_handler = None  # 将在 main.py 中设置
 
     async def handle_discord_message(self, message: discord.Message):
         """处理 Discord 消息
@@ -60,6 +62,23 @@ class DiscordMessageHandler:
             if self.router:
                 await self.router.send_message(maim_message)
                 logger.debug(f"已成功转发 Discord 消息到 MaiBot Core: {message.id}")
+                
+                # 更新发送处理器的上下文映射
+                if self.send_handler:
+                    if (hasattr(message.channel, 'parent') and message.channel.parent is not None and
+                        global_config.chat.inherit_channel_memory):
+                        # 子区消息：更新上下文映射
+                        parent_channel_id = str(message.channel.parent.id)
+                        thread_id = str(message.channel.id)
+                        self.send_handler.update_thread_context(parent_channel_id, thread_id)
+                        logger.debug(f"更新子区上下文映射: 父频道{parent_channel_id} -> 子区{thread_id}")
+                    elif (hasattr(message.channel, 'type') and 
+                          message.channel.type == discord.ChannelType.text and
+                          global_config.chat.inherit_channel_memory):
+                        # 父频道消息：清除该频道的子区映射，确保回复发送到父频道
+                        parent_channel_id = str(message.channel.id)
+                        self.send_handler.clear_thread_context(parent_channel_id)
+                        logger.debug(f"清除父频道的子区映射，确保回复发送到父频道: {parent_channel_id}")
             else:
                 logger.error("MaiBot 路由器未设置，无法转发消息")
 
@@ -113,26 +132,57 @@ class DiscordMessageHandler:
 
             # 构造群组信息（如果是服务器消息）
             group_info = None
+            # 初始化子区上下文变量
+            thread_context_marker = False
+            original_thread_id = None
+            thread_name = None
+            
             if message.guild:
                 # 检查是否为Thread消息
                 is_thread_message = hasattr(message.channel, 'parent') and message.channel.parent is not None
                 
                 if is_thread_message:
-                    # Thread消息：使用Thread作为群组，包含父频道信息
+                    # Thread消息：根据配置决定是否继承父频道记忆
                     thread_name = message.channel.name
                     parent_channel_name = (message.channel.parent.name 
                                          if hasattr(message.channel.parent, 'name') 
                                          else f"频道{message.channel.parent.id}")
-                    # 格式: 子区名称 [父频道名称] @ 服务器名称
-                    group_name = f"{thread_name} [{parent_channel_name}] @ {message.guild.name}"
                     
-                    group_info = GroupInfo(
-                        platform=global_config.maibot_server.platform_name,
-                        group_id=str(message.channel.id),  # 使用Thread ID作为群组ID
-                        group_name=group_name
-                    )
+                    if global_config.chat.inherit_channel_memory:
+                        # 继承父频道记忆：使用父频道ID作为群组ID，但在消息中保留子区信息
+                        group_id = str(message.channel.parent.id)  # 使用父频道ID实现记忆共享
+                        # 格式: 父频道名称 @ 服务器名称 (用于显示和记忆)
+                        group_name = f"{parent_channel_name} @ {message.guild.name}"
+                        
+                        # 在群组名称中添加子区上下文信息，帮助AI理解当前在哪个子区
+                        actual_context = f"[当前子区: {thread_name}] {group_name}"
+                        group_info = GroupInfo(
+                            platform=global_config.maibot_server.platform_name,
+                            group_id=group_id,  # 父频道ID - 用于记忆共享
+                            group_name=actual_context  # 包含子区上下文的名称
+                        )
+                        logger.debug(f"子区继承父频道记忆: 子区={thread_name}, 使用父频道ID={group_id}, 但保留子区上下文")
+                        
+                        # 重要：标记这是一个从子区发出的消息，用于回复时的路由
+                        thread_context_marker = True
+                        original_thread_id = str(message.channel.id)
+                    else:
+                        # 独立记忆：使用子区ID作为群组ID
+                        group_id = str(message.channel.id)
+                        # 格式: 子区名称 [父频道名称] @ 服务器名称
+                        group_name = f"{thread_name} [{parent_channel_name}] @ {message.guild.name}"
+                        group_info = GroupInfo(
+                            platform=global_config.maibot_server.platform_name,
+                            group_id=group_id,
+                            group_name=group_name
+                        )
+                        logger.debug(f"子区使用独立记忆: 子区ID={group_id}")
+                        thread_context_marker = False
+                        original_thread_id = None
+                    
                     logger.debug(f"群组信息 (子区): {group_info.group_name} (ID: {group_info.group_id})")
                     logger.debug(f"父频道信息: {parent_channel_name} (ID: {message.channel.parent.id})")
+                    logger.debug(f"实际子区信息: {thread_name} (ID: {message.channel.id})")
                     logger.debug(f"服务器信息: {message.guild.name} (ID: {message.guild.id})")
                 else:
                     # 普通频道消息：使用频道作为群组
@@ -148,6 +198,8 @@ class DiscordMessageHandler:
                     )
                     logger.debug(f"群组信息 (频道): {group_info.group_name} (ID: {group_info.group_id})")
                     logger.debug(f"服务器信息: {message.guild.name} (ID: {message.guild.id})")
+                    thread_context_marker = False
+                    original_thread_id = None
             else:
                 logger.debug("私聊消息，无群组信息")
 
@@ -244,6 +296,18 @@ class DiscordMessageHandler:
                 if "reply" not in content_formats:
                     content_formats.append("reply")
                 logger.debug(f"处理回复消息: {reply_message_id}")
+
+            # 如果是启用记忆继承的子区消息，在消息段中添加路由信息
+            if thread_context_marker and original_thread_id:
+                # 添加一个特殊的路由信息段，用于指导回复时的目标选择
+                thread_routing_info = {
+                    "original_thread_id": original_thread_id,
+                    "thread_name": thread_name,
+                    "parent_channel_id": str(message.channel.parent.id),
+                    "inherit_memory": True
+                }
+                message_segments.append(Seg(type="thread_context", data=thread_routing_info))
+                logger.debug(f"添加子区路由信息: {thread_routing_info}")
 
             # 如果没有任何内容，跳过该消息
             if not message_segments:
