@@ -8,7 +8,7 @@ import traceback
 from src.logger import logger
 from src.recv_handler.discord_client import discord_client
 from src.recv_handler.message_handler import message_handler
-from src.send_handler import send_handler
+from src.send_handler.main_send_handler import send_handler
 from src.mmc_com_layer import mmc_start_com, mmc_stop_com, router
 from src.utils import async_task_manager
 from src.config import global_config
@@ -166,7 +166,7 @@ async def run_adapter():
     try:
         # 设置消息处理器的路由器
         message_handler.router = router
-        
+
         # 设置消息处理器和发送处理器的相互引用（用于子区上下文映射）
         message_handler.send_handler = send_handler
 
