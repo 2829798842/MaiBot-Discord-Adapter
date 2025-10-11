@@ -243,11 +243,12 @@ class DiscordClientManager:
                 last_error = str(e)
                 logger.error(f"第 {attempt + 1} 次尝试时发生未知错误: {last_error}")
 
-        # 所有重试都失败了
-        if last_error:
-            error_msg = f"Discord 客户端启动失败，已重试 {max_retries} 次。最后错误: {last_error}"
-        else:
-            error_msg = f"Discord 客户端启动失败，已重试 {max_retries} 次。"
+        # 如果没有记录任何错误，说明客户端是被正常关闭的
+        if last_error is None:
+            logger.info("Discord 客户端已停止运行")
+            return
+
+        error_msg = f"Discord 客户端启动失败，已重试 {max_retries} 次。最后错误: {last_error}"
         logger.error(error_msg)
         raise Exception(error_msg)
 
