@@ -181,8 +181,14 @@ class DiscordClientManager:
         重置客户端连接
         """
         # 关闭现有连接
-        if self.client and not self.client.is_closed():
-            await self.client.close()
+        if self.client:
+            try:
+                if not self.client.is_closed():
+                    await self.client.close()
+                    logger.debug("旧客户端已关闭")
+            except Exception as e:
+                logger.warning(f"关闭旧客户端时出错: {e}")
+
 
         # 重新创建客户端
         self._setup_client()
