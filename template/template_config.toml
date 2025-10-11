@@ -68,4 +68,3 @@ message_content = true
 [discord.retry]
 retry_delay = 5                  # 重试间隔（秒）
 connection_check_interval = 30  # 连接状态检查间隔（秒），建议30秒以上避免频繁检查
-max_retries = 0                 # 最大重试次数，0表示无限重试

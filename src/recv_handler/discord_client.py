@@ -314,11 +314,13 @@ class DiscordClientManager:
             
             # 启动新的连接（异步进行，不阻塞监控任务）
             self._reconnect_task = asyncio.create_task(self._reconnect_client())
+            logger.debug(f"重连任务已创建: {self._reconnect_task}")
             
         except Exception as e:
             logger.error(f"强制重连时发生错误: {e}")
             self.is_connected = False
             self.is_reconnecting = False
+            logger.debug("force_reconnect异常，已重置is_reconnecting=False")
 
     async def _reconnect_client(self):
         """异步重连客户端"""
@@ -326,13 +328,12 @@ class DiscordClientManager:
             # 获取重试配置
             retry_config = global_config.discord.retry
             retry_delay = retry_config.get('retry_delay', 5)
-            max_retries = retry_config.get('max_retries', 10)  # 添加最大重试次数
 
             attempt = 0
-            while not self.is_shutting_down and (max_retries <= 0 or attempt < max_retries):
+            while not self.is_shutting_down:
                 try:
                     if attempt > 0:
-                        logger.info(f"第 {attempt} 次重连尝试（最多{max_retries}次）...")
+                        logger.info(f"第 {attempt} 次重连尝试...")
                         await asyncio.sleep(retry_delay)
                         await self._reset_client()
 
@@ -357,9 +358,6 @@ class DiscordClientManager:
                 except Exception as e:
                     logger.warning(f"第 {attempt + 1} 次重连失败: {e}")
                     attempt += 1
-                    if attempt >= max_retries > 0:
-                        logger.error(f"已达到最大重试次数 {max_retries}，停止重连")
-                        break
                     continue
             
             if not self.is_shutting_down:
