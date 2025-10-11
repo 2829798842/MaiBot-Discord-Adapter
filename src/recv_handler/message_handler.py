@@ -22,6 +22,9 @@ class DiscordMessageHandler:
         send_handler: Discord 发送处理器引用，用于更新上下文映射
     """
 
+    router: any
+    send_handler: any
+
     def __init__(self):
         """初始化消息处理器"""
         self.router = None
@@ -598,4 +601,4 @@ class DiscordMessageHandler:
 
 
 # 创建全局消息处理器实例
-message_handler = DiscordMessageHandler()
+message_handler: DiscordMessageHandler = DiscordMessageHandler()

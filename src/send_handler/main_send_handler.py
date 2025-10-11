@@ -10,7 +10,7 @@ from maim_message import BaseMessageInfo, MessageBase, Seg
 
 from ..logger import logger
 from .message_send_handler import DiscordContentBuilder
-from .thread_send_headler import ThreadRoutingManager
+from .thread_send_handler import ThreadRoutingManager
 
 
 class DiscordSendHandler:
@@ -22,7 +22,9 @@ class DiscordSendHandler:
         _content_builder: 消息内容构建器。
     """
 
-    MAX_MESSAGE_LENGTH: int = 2000
+    MAX_MESSAGE_LENGTH: int
+    _thread_manager: ThreadRoutingManager
+    _content_builder: DiscordContentBuilder
 
     def __init__(self) -> None:
         """初始化消息调度器。
@@ -31,8 +33,9 @@ class DiscordSendHandler:
             None: 方法执行完成后无返回值。
         """
 
-        self._thread_manager: ThreadRoutingManager = ThreadRoutingManager()
-        self._content_builder: DiscordContentBuilder = DiscordContentBuilder()
+        self.MAX_MESSAGE_LENGTH = 2000
+        self._thread_manager = ThreadRoutingManager()
+        self._content_builder = DiscordContentBuilder()
 
     def update_thread_context(self, parent_channel_id: str, thread_id: str) -> None:
         """记录父频道与活跃子区的关联关系。
@@ -287,4 +290,4 @@ class DiscordSendHandler:
             logger.error("发送消息片段失败：%s", exc)
 
 
-send_handler = DiscordSendHandler()
+send_handler: DiscordSendHandler = DiscordSendHandler()
