@@ -1,4 +1,4 @@
-"""模块名称：send_handler.thread_send_headler
+"""模块名称：send_handler.thread_send_handler
 主要功能：管理 Discord 消息发送的频道与子区路由。"""
 
 from __future__ import annotations
@@ -455,3 +455,4 @@ class ThreadRoutingManager:
                 return None
             return loaded if isinstance(loaded, dict) else None
         return None
+
