@@ -51,7 +51,7 @@ class ThreadRoutingManager:
         """
 
         self._thread_context_map[parent_channel_id] = thread_id
-        logger.debug("更新子区上下文映射：%s -> %s", parent_channel_id, thread_id)
+        logger.debug(f"更新子区上下文映射：{parent_channel_id} -> {thread_id}")
 
     def clear_thread_context(self, parent_channel_id: str) -> None:
         """清除父频道映射关系。
@@ -65,7 +65,7 @@ class ThreadRoutingManager:
 
         previous_thread_id: Optional[str] = self._thread_context_map.pop(parent_channel_id, None)
         if previous_thread_id:
-            logger.debug("清除子区上下文映射：%s (之前映射到 %s)", parent_channel_id, previous_thread_id)
+            logger.debug(f"清除子区上下文映射：{parent_channel_id} (之前映射到 {previous_thread_id})")
 
     def get_active_thread(self, parent_channel_id: str) -> Optional[str]:
         """查询父频道当前记录的子区。
@@ -91,7 +91,7 @@ class ThreadRoutingManager:
 
         message_info: Any = message.message_info
         if not isinstance(message_info, BaseMessageInfo):
-            logger.error("消息缺少有效的 message_info：%s", message)
+            logger.error(f"消息缺少有效的 message_info：{message}")
             return None
 
         if message_info.group_info:
@@ -100,7 +100,7 @@ class ThreadRoutingManager:
         user_info = message_info.user_info
         user_id: Optional[str] = getattr(user_info, "user_id", None) if user_info else None
         if not user_id:
-            logger.error("消息缺少 user_id，无法解析私聊目标：%s", message)
+            logger.error(f"消息缺少 user_id，无法解析私聊目标：{message}")
             return None
 
         return await self._resolve_direct_target(user_id)
@@ -127,7 +127,7 @@ class ThreadRoutingManager:
         try:
             reply_int: int = int(reply_id)
         except (TypeError, ValueError):
-            logger.warning("回复消息 ID 无效：%s", reply_id)
+            logger.warning(f"回复消息 ID 无效：{reply_id}")
             return None
 
         try:
@@ -136,11 +136,11 @@ class ThreadRoutingManager:
                 return await partial_message.fetch()
             return await channel.fetch_message(reply_int)  # type: ignore[arg-type]
         except discord.NotFound:
-            logger.warning("被回复的消息不存在：%s", reply_id)
+            logger.warning(f"被回复的消息不存在：{reply_id}")
         except discord.Forbidden:
-            logger.warning("无权限获取被回复的消息：%s", reply_id)
+            logger.warning(f"无权限获取被回复的消息：{reply_id}")
         except discord.HTTPException as exc:
-            logger.warning("获取被回复消息失败：%s", exc)
+            logger.warning(f"获取被回复消息失败：{exc}")
 
         return None
 
@@ -174,7 +174,7 @@ class ThreadRoutingManager:
                     self._channel_cache[int(fetched_thread.id)] = fetched_thread
             if isinstance(thread_channel, discord.Thread):
                 return thread_channel
-            logger.warning("子区路由目标无效，回退到父频道：%s", thread_routing)
+            logger.warning(f"子区路由目标无效，回退到父频道：{thread_routing}")
 
         if reply_id and global_config.chat.inherit_channel_memory:
             thread_from_reply = await self._find_thread_by_message_id(reply_id, target_id)
@@ -193,18 +193,18 @@ class ThreadRoutingManager:
             channel = await self._fetch_channel(target_id)
 
         if channel is None:
-            logger.warning("找不到频道或子区：%s", target_id)
+            logger.warning(f"找不到频道或子区：{target_id}")
             return None
 
         if isinstance(channel, discord.Thread):
             if not channel.permissions_for(channel.guild.me).send_messages_in_threads:
-                logger.warning("没有权限在子区 %s 发送消息", channel.id)
+                logger.warning(f"没有权限在子区 {channel.id} 发送消息")
                 return None
             return channel
 
         if isinstance(channel, discord.TextChannel):
             if not channel.permissions_for(channel.guild.me).send_messages:
-                logger.warning("没有权限在频道 %s 发送消息", channel.id)
+                logger.warning(f"没有权限在频道 {channel.id} 发送消息")
                 return None
 
             if global_config.chat.inherit_channel_memory and not reply_in_parent:
@@ -218,7 +218,7 @@ class ThreadRoutingManager:
 
             return channel
 
-        logger.warning("目标 %s 不是文本频道也不是子区", target_id)
+        logger.warning(f"目标 {target_id} 不是文本频道也不是子区")
         return None
 
     async def _resolve_direct_target(self, user_id: str) -> Optional[discord.abc.Messageable]:
@@ -234,7 +234,7 @@ class ThreadRoutingManager:
         try:
             int_user_id: int = int(user_id)
         except (TypeError, ValueError):
-            logger.error("用户 ID 无效：%s", user_id)
+            logger.error(f"用户 ID 无效：{user_id}")
             return None
 
         user: Optional[discord.User] = self._user_cache.get(int_user_id) or discord_client.client.get_user(int_user_id)
@@ -242,10 +242,10 @@ class ThreadRoutingManager:
             try:
                 user = await discord_client.client.fetch_user(int_user_id)
             except discord.NotFound:
-                logger.warning("用户 %s 不存在", int_user_id)
+                logger.warning(f"用户 {int_user_id} 不存在")
                 return None
             except discord.HTTPException as exc:
-                logger.error("获取用户 %s 失败：%s", int_user_id, exc)
+                logger.error(f"获取用户 {int_user_id} 失败：{exc}")
                 return None
 
         self._user_cache[int_user_id] = user
@@ -256,7 +256,7 @@ class ThreadRoutingManager:
         try:
             return await user.create_dm()
         except discord.HTTPException as exc:
-            logger.error("创建与用户 %s 的 DM 失败：%s", int_user_id, exc)
+            logger.error(f"创建与用户 {int_user_id} 的 DM 失败：{exc}")
             return None
 
     def _get_cached_channel(self, channel_id: int) -> Optional[discord.abc.Messageable]:
@@ -286,10 +286,10 @@ class ThreadRoutingManager:
         except discord.NotFound:
             return None
         except discord.Forbidden:
-            logger.error("无权限访问频道 %s", channel_id)
+            logger.error(f"无权限访问频道 {channel_id}")
             return None
         except discord.HTTPException as exc:
-            logger.error("获取频道 %s 时出错：%s", channel_id, exc)
+            logger.error(f"获取频道 {channel_id} 时出错：{exc}")
             return None
 
         self._channel_cache[channel_id] = channel
@@ -455,4 +455,3 @@ class ThreadRoutingManager:
                 return None
             return loaded if isinstance(loaded, dict) else None
         return None
-

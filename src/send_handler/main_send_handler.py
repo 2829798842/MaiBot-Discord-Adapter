@@ -86,17 +86,16 @@ class DiscordSendHandler:
 
         try:
             message: MessageBase = MessageBase.from_dict(message_dict)
-        except (TypeError, ValueError, KeyError) as exc:
-            logger.error("解析 MaiBot 消息失败：%s", exc)
+        except (ValueError, TypeError) as exc:
+            logger.error(f"无法解析 MaiBot 消息对象：{exc}")
             return
-
         if not isinstance(message.message_info, BaseMessageInfo):
-            logger.error("消息缺少有效的 message_info 字段：%s", message_dict)
+            logger.error(f"消息缺少有效的 message_info 字段：{message_dict}")
             return
 
         segment: Seg = message.message_segment
         if not isinstance(segment, Seg) or not getattr(segment, "type", None):
-            logger.error("消息缺少有效的消息段信息：%s", message_dict)
+            logger.error(f"消息缺少有效的消息段信息：{message_dict}")
             return
         segment_type: Optional[str] = getattr(segment, "type", None)
 
@@ -120,7 +119,7 @@ class DiscordSendHandler:
             None: 当前仅记录日志，不做进一步处理。
         """
 
-        logger.warning("收到 command 消息，Discord 适配器暂未实现命令处理：%s", message.message_segment.data)
+        logger.warning("收到 command 消息，Discord 适配器暂未实现命令处理：{message.message_segment.data}")
 
     async def _handle_notify(self, message: MessageBase) -> None:
         """处理 notify 类型消息，当前仅记录日志。
@@ -132,7 +131,7 @@ class DiscordSendHandler:
             None: 方法执行后无返回值。
         """
 
-        logger.debug("收到 notify 消息，已忽略：%s", message.message_segment.data)
+        logger.debug("收到 notify 消息，已忽略：{message.message_segment.data}")
 
     async def _handle_regular_message(self, message: MessageBase) -> None:
         """处理常规消息，将其发送到 Discord。
@@ -146,11 +145,11 @@ class DiscordSendHandler:
 
         message_info: BaseMessageInfo = message.message_info
         message_id: Optional[str] = getattr(message_info, "message_id", None)
-        logger.debug("开始向 Discord 发送消息：%s", message_id)
+        logger.debug("开始向 Discord 发送消息：{message_id}")
 
         target_channel: Optional[discord.abc.Messageable] = await self._thread_manager.resolve_target_channel(message)
         if target_channel is None:
-            logger.warning("无法解析目标频道，放弃发送：%s", message_id)
+            logger.warning("无法解析目标频道，放弃发送：{message_id}")
             return
 
         content_result: tuple[Optional[str], List[discord.File]] = self._content_builder.build(message.message_segment)
@@ -161,8 +160,8 @@ class DiscordSendHandler:
         if content is not None:
             content_preview = content[:100] + "..." if len(content) > 100 else content
         files_count: int = len(files)
-        logger.debug("消息内容预览：%s", content_preview)
-        logger.debug("附件数量：%d", files_count)
+        logger.debug("消息内容预览：{content_preview}")
+        logger.debug("附件数量：{files_count}")
 
         reference: Optional[discord.Message] = await self._thread_manager.get_reply_reference(message, target_channel)
 
@@ -192,31 +191,40 @@ class DiscordSendHandler:
         """
 
         try:
-            remaining_reference: Optional[discord.Message] = reference
+            # Discord 限制：一条消息最多 10 个附件(主要指图片)
+            MAX_FILES_PER_MESSAGE: int = 10
 
+            # 如果有文件，检查数量并一次性发送
             if files:
-                for index, attachment in enumerate(files):
-                    index_position: int = index
-                    file_item: discord.File = attachment
-                    payload_content: Optional[str] = None
-                    payload_reference: Optional[discord.Message] = remaining_reference if index_position == 0 else None
+                file_list: List[discord.File] = list(files)
 
-                    if index_position == 0 and content and len(content) <= self.MAX_MESSAGE_LENGTH:
-                        payload_content = content
-                        content = None
+                # 如果超过 10 个文件，只发送前 10 个并警告
+                if len(file_list) > MAX_FILES_PER_MESSAGE:
+                    logger.warning(f"消息包含 {len(file_list)} 个文件，超过 Discord 限制，仅发送前 {MAX_FILES_PER_MESSAGE} 个")
+                    file_list = file_list[:MAX_FILES_PER_MESSAGE]
 
-                    await channel.send(content=payload_content, file=file_item, reference=payload_reference)
+                # 一次性发送所有文件和文本内容
+                send_content: Optional[str] = None
+                if content and len(content) <= self.MAX_MESSAGE_LENGTH:
+                    send_content = content
+                    content = None  # 已使用，清空
 
-                remaining_reference = None
+                await channel.send(
+                    content=send_content,
+                    files=file_list,
+                    reference=reference
+                )
+                logger.debug(f"已发送 {len(file_list)} 个文件" + ("和文本内容" if send_content else ""))
 
+            # 如果还有剩余文本内容（太长或没有文件时），单独发送
             if content:
                 if len(content) <= self.MAX_MESSAGE_LENGTH:
-                    await channel.send(content=content, reference=remaining_reference)
+                    await channel.send(content=content, reference=reference if not files else None)
                 else:
-                    await self._send_long_message(channel, content, remaining_reference)
+                    await self._send_long_message(channel, content, reference if not files else None)
 
         except (discord.HTTPException, discord.Forbidden) as exc:
-            logger.error("发送 Discord 消息失败：%s", exc)
+            logger.error(f"发送 Discord 消息失败：{exc}")
 
     async def _send_long_message(
         self,
@@ -235,37 +243,122 @@ class DiscordSendHandler:
             None: 拆分发送完毕后无返回值。
         """
 
-        lines: list[str] = content.split("\n")
+        # 预留一些空间，避免边界问题
+        max_len: int = self.MAX_MESSAGE_LENGTH - 10
+        parts: List[str] = []
+
+        # 检查是否有代码块
+        if "```" in content:
+            # 按代码块分割
+            parts = self._split_preserve_codeblocks(content, max_len)
+        else:
+            # 按行分割
+            parts = self._split_by_lines(content, max_len)
+
+        # 发送所有部分
+        for index, part in enumerate(parts):
+            if part.strip():  # 跳过空白部分
+                await self._send_single_part(
+                    channel,
+                    part,
+                    reference if index == 0 else None
+                )
+                logger.debug(f"已发送长消息的第 {index + 1}/{len(parts)} 部分")
+
+    def _split_preserve_codeblocks(self, content: str, max_len: int) -> List[str]:
+        """保护代码块完整性的分割方法
+        
+        Args:
+            content: 要分割的内容
+            max_len: 每部分最大长度
+            
+        Returns:
+            List[str]: 分割后的部分列表
+        """
+        parts: List[str] = []
         current: str = ""
-        part_index: int = 0
+        in_codeblock: bool = False
+        codeblock_start: str = ""
+
+        lines: List[str] = content.split("\n")
 
         for line in lines:
-            current_line: str = line
-            if len(current_line) > self.MAX_MESSAGE_LENGTH:
+            # 检测代码块开始/结束
+            if line.strip().startswith("```"):
+                if not in_codeblock:
+                    # 代码块开始
+                    in_codeblock = True
+                    codeblock_start = line.strip()
+                else:
+                    # 代码块结束
+                    in_codeblock = False
+
+            # 尝试添加当前行
+            test_content: str = f"{current}\n{line}" if current else line
+
+            if len(test_content) > max_len:
+                # 超长了
+                if in_codeblock:
+                    # 在代码块中，需要关闭并重新开启
+                    parts.append(current + "\n```")
+                    current = codeblock_start + "\n" + line
+                else:
+                    # 不在代码块中，正常分割
+                    if current:
+                        parts.append(current)
+                    current = line
+            else:
+                current = test_content
+
+        # 添加最后一部分
+        if current:
+            parts.append(current)
+
+        return parts
+
+    def _split_by_lines(self, content: str, max_len: int) -> List[str]:
+        """按行分割消息
+        
+        Args:
+            content: 要分割的内容
+            max_len: 每部分最大长度
+            
+        Returns:
+            List[str]: 分割后的部分列表
+        """
+        parts: List[str] = []
+        current: str = ""
+
+        lines: List[str] = content.split("\n")
+
+        for line in lines:
+            # 如果单行就超长，强制切分
+            if len(line) > max_len:
                 if current:
-                    await self._send_single_part(channel, current, reference if part_index == 0 else None)
-                    part_index += 1
+                    parts.append(current)
                     current = ""
 
-                remaining_line: str = current_line
-                while len(remaining_line) > self.MAX_MESSAGE_LENGTH:
-                    chunk: str = remaining_line[: self.MAX_MESSAGE_LENGTH]
-                    remaining_line = remaining_line[self.MAX_MESSAGE_LENGTH :]
-                    await self._send_single_part(channel, chunk, reference if part_index == 0 else None)
-                    part_index += 1
+                # 切分超长行
+                while len(line) > max_len:
+                    parts.append(line[:max_len])
+                    line = line[max_len:]
 
-                current = remaining_line
+                current = line
             else:
-                candidate: str = f"{current}\n{current_line}" if current else current_line
-                if len(candidate) > self.MAX_MESSAGE_LENGTH:
-                    await self._send_single_part(channel, current, reference if part_index == 0 else None)
-                    part_index += 1
-                    current = current_line
-                else:
-                    current = candidate
+                # 尝试添加当前行
+                test_content: str = f"{current}\n{line}" if current else line
 
+                if len(test_content) > max_len:
+                    parts.append(current)
+                    current = line
+                else:
+                    current = test_content
+
+        # 添加最后一部分
         if current:
-            await self._send_single_part(channel, current, reference if part_index == 0 else None)
+            parts.append(current)
+
+        return parts
 
     async def _send_single_part(
         self,
@@ -287,7 +380,7 @@ class DiscordSendHandler:
         try:
             await channel.send(content=content, reference=reference)
         except (discord.HTTPException, discord.Forbidden) as exc:
-            logger.error("发送消息片段失败：%s", exc)
+            logger.error(f"发送消息片段失败：{exc}")
 
 
 send_handler: DiscordSendHandler = DiscordSendHandler()

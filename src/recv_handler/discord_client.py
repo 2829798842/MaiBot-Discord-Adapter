@@ -145,11 +145,11 @@ class DiscordClientManager:
             # 检查黑白名单
             guild_id = message.guild.id if message.guild else None
             channel_id = message.channel.id
-            
+
             # 检查是否为子区消息
             is_thread_message = hasattr(message.channel, 'parent') and message.channel.parent is not None
             thread_id = None
-            
+
             if is_thread_message:
                 thread_id = message.channel.id  # 子区ID
                 # 对于子区消息，如果继承父频道权限，则使用父频道ID进行权限检查
@@ -192,7 +192,7 @@ class DiscordClientManager:
 
         # 重新创建客户端
         self._setup_client()
-        
+
         # 标记为未连接
         self.is_connected = False
 
@@ -260,7 +260,7 @@ class DiscordClientManager:
                 continue
 
             attempt += 1
-        
+
         logger.info("Discord 客户端已停止运行")
         return
 
@@ -289,7 +289,7 @@ class DiscordClientManager:
 
         logger.info("强制重连Discord客户端...")
         self.is_reconnecting = True
-        
+
         try:
             # 标记为未连接
             self.is_connected = False
@@ -317,11 +317,11 @@ class DiscordClientManager:
             # 重新创建客户端
             await self._reset_client()
             logger.info("Discord客户端已重置，启动重连任务...")
-            
+
             # 启动新的连接（异步进行，不阻塞监控任务）
             self._reconnect_task = asyncio.create_task(self._reconnect_client())
             logger.debug(f"重连任务已创建: {self._reconnect_task}")
-            
+
         except Exception as e:
             logger.error(f"强制重连时发生错误: {e}")
             self.is_connected = False
@@ -345,7 +345,7 @@ class DiscordClientManager:
 
                     logger.debug("开始连接到Discord...")
                     await self.client.start(global_config.discord.token)
-                    
+
                     # 如果执行到这里，说明连接成功后又断开了
                     logger.info("Discord连接已断开，准备重试")
                     self.is_connected = False
@@ -365,10 +365,10 @@ class DiscordClientManager:
                     logger.warning(f"第 {attempt + 1} 次重连失败: {e}")
                     attempt += 1
                     continue
-            
+
             if not self.is_shutting_down:
                 logger.warning("重连循环结束，未能成功重连")
-                        
+
         except asyncio.CancelledError:
             logger.info("重连任务被取消")
             raise
