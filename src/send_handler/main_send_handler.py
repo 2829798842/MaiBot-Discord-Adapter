@@ -33,7 +33,7 @@ class DiscordSendHandler:
             None: 方法执行完成后无返回值。
         """
 
-        self.MAX_MESSAGE_LENGTH = 2000
+        self.MAX_MESSAGE_LENGTH = 2000 # pylint: disable=invalid-name
         self._thread_manager = ThreadRoutingManager()
         self._content_builder = DiscordContentBuilder()
 
@@ -119,7 +119,7 @@ class DiscordSendHandler:
             None: 当前仅记录日志，不做进一步处理。
         """
 
-        logger.warning("收到 command 消息，Discord 适配器暂未实现命令处理：{message.message_segment.data}")
+        logger.warning(f"收到 command 消息，Discord 适配器暂未实现命令处理：{message.message_segment.data}")
 
     async def _handle_notify(self, message: MessageBase) -> None:
         """处理 notify 类型消息，当前仅记录日志。
@@ -131,7 +131,7 @@ class DiscordSendHandler:
             None: 方法执行后无返回值。
         """
 
-        logger.debug("收到 notify 消息，已忽略：{message.message_segment.data}")
+        logger.debug(f"收到 notify 消息，已忽略：{message.message_segment.data}")
 
     async def _handle_regular_message(self, message: MessageBase) -> None:
         """处理常规消息，将其发送到 Discord。
@@ -145,11 +145,11 @@ class DiscordSendHandler:
 
         message_info: BaseMessageInfo = message.message_info
         message_id: Optional[str] = getattr(message_info, "message_id", None)
-        logger.debug("开始向 Discord 发送消息：{message_id}")
+        logger.debug(f"开始向 Discord 发送消息：{message_id}")
 
         target_channel: Optional[discord.abc.Messageable] = await self._thread_manager.resolve_target_channel(message)
         if target_channel is None:
-            logger.warning("无法解析目标频道，放弃发送：{message_id}")
+            logger.warning(f"无法解析目标频道，放弃发送：{message_id}")
             return
 
         content_result: tuple[Optional[str], List[discord.File]] = self._content_builder.build(message.message_segment)
@@ -160,8 +160,8 @@ class DiscordSendHandler:
         if content is not None:
             content_preview = content[:100] + "..." if len(content) > 100 else content
         files_count: int = len(files)
-        logger.debug("消息内容预览：{content_preview}")
-        logger.debug("附件数量：{files_count}")
+        logger.debug(f"消息内容预览：{content_preview}")
+        logger.debug(f"附件数量：{files_count}")
 
         reference: Optional[discord.Message] = await self._thread_manager.get_reply_reference(message, target_channel)
 
@@ -192,7 +192,7 @@ class DiscordSendHandler:
 
         try:
             # Discord 限制：一条消息最多 10 个附件(主要指图片)
-            MAX_FILES_PER_MESSAGE: int = 10
+            MAX_FILES_PER_MESSAGE: int = 10 # pylint: disable=invalid-name
 
             # 如果有文件，检查数量并一次性发送
             if files:
