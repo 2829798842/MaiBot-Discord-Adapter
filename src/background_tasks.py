@@ -112,7 +112,7 @@ class ConnectionMonitorTask:
             return
 
         client = self.client_manager.client
-        
+
         # 快速检查：客户端是否已关闭
         if client.is_closed():
             if self.client_manager.is_connected:
@@ -127,11 +127,11 @@ class ConnectionMonitorTask:
             # 设置3秒超时，避免卡住
             check_task = asyncio.create_task(self._quick_check_ready(client))
             is_ready, latency = await asyncio.wait_for(check_task, timeout=3.0)
-            
+
             # 检查latency是否异常
             latency_invalid = (
                 latency is None or
-                latency == float('inf') or 
+                latency == float('inf') or
                 latency != latency or  # NaN check
                 latency < 0
             )
@@ -159,7 +159,7 @@ class ConnectionMonitorTask:
                         await self.client_manager.force_reconnect()
                 else:
                     logger.debug("Discord客户端正在连接中...")
-                    
+
         except asyncio.TimeoutError:
             # 检查超时，说明获取状态时卡住了
             logger.error("连接状态检查超时（3秒），客户端可能已失去响应")

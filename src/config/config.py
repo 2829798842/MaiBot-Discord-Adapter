@@ -78,7 +78,7 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
 
 
 def is_user_allowed(config: GlobalConfig, user_id: int,
-                   guild_id: int = None, channel_id: int = None, 
+                   guild_id: int = None, channel_id: int = None,
                    thread_id: int = None, is_thread: bool = False) -> bool:
     """检查用户是否被允许使用
 
@@ -96,8 +96,8 @@ def is_user_allowed(config: GlobalConfig, user_id: int,
     logger = logging.getLogger(__name__)
 
     chat_config = config.chat
-    logger.debug("权限检查开始: 用户=%s, 服务器=%s, 频道=%s, 子区=%s, 是否子区=%s",
-                 user_id, guild_id, channel_id, thread_id, is_thread)
+    logger.debug("权限检查开始: 用户={user_id}, 服务器={guild_id}, "
+                 "频道={channel_id}, 子区={thread_id}, 是否子区={is_thread}")
 
     # 如果是子区消息且全局禁用子区交互
     if is_thread and not chat_config.allow_thread_interaction:
@@ -105,56 +105,52 @@ def is_user_allowed(config: GlobalConfig, user_id: int,
         return False
 
     # 检查用户权限
-    logger.debug("用户权限检查: 类型=%s, 列表=%s",
-                 chat_config.user_list_type, chat_config.user_list)
+    logger.debug("用户权限检查: 类型={chat_config.user_list_type}, 列表={chat_config.user_list}")
     if chat_config.user_list_type == "whitelist":
         if user_id not in chat_config.user_list:
-            logger.debug("用户 %s 不在白名单中", user_id)
+            logger.debug("用户 {user_id} 不在白名单中")
             return False
     elif chat_config.user_list_type == "blacklist":
         if user_id in chat_config.user_list:
-            logger.debug("用户 %s 在黑名单中", user_id)
+            logger.debug("用户 {user_id} 在黑名单中")
             return False
 
     # 检查服务器权限（如果是服务器消息）
     if guild_id is not None:
-        logger.debug("服务器权限检查: 类型=%s, 列表=%s",
-                     chat_config.guild_list_type, chat_config.guild_list)
+        logger.debug("服务器权限检查: 类型={chat_config.guild_list_type} 列表={chat_config.guild_list}")
         if chat_config.guild_list_type == "whitelist":
             if guild_id not in chat_config.guild_list:
-                logger.debug("服务器 %s 不在白名单中", guild_id)
+                logger.debug("服务器 {guild_id} 不在白名单中")
                 return False
         elif chat_config.guild_list_type == "blacklist":
             if guild_id in chat_config.guild_list:
-                logger.debug("服务器 %s 在黑名单中", guild_id)
+                logger.debug("服务器 {guild_id} 在黑名单中")
                 return False
 
     # 检查频道权限（如果是频道消息）
     if channel_id is not None:
-        logger.debug("频道权限检查: 类型=%s, 列表=%s",
-                     chat_config.channel_list_type, chat_config.channel_list)
+        logger.debug("频道权限检查: 类型={chat_config.channel_list_type}, 列表={chat_config.channel_list}")
         if chat_config.channel_list_type == "whitelist":
             if channel_id not in chat_config.channel_list:
-                logger.debug("频道 %s 不在白名单中", channel_id)
+                logger.debug("频道 {channel_id} 不在白名单中")
                 return False
         elif chat_config.channel_list_type == "blacklist":
             if channel_id in chat_config.channel_list:
-                logger.debug("频道 %s 在黑名单中", channel_id)
+                logger.debug("频道 {channel_id} 在黑名单中")
                 return False
 
     # 检查子区权限（如果是子区消息）
     if is_thread and thread_id is not None:
         # 如果启用了继承父频道权限，则跳过子区独立权限检查
         if not chat_config.inherit_channel_permissions:
-            logger.debug("子区权限检查: 类型=%s, 列表=%s",
-                         chat_config.thread_list_type, chat_config.thread_list)
+            logger.debug("子区权限检查: 类型={chat_config.thread_list_type}, 列表={chat_config.thread_list}")
             if chat_config.thread_list_type == "whitelist":
                 if thread_id not in chat_config.thread_list:
-                    logger.debug("子区 %s 不在白名单中", thread_id)
+                    logger.debug("子区 {thread_id} 不在白名单中")
                     return False
             elif chat_config.thread_list_type == "blacklist":
                 if thread_id in chat_config.thread_list:
-                    logger.debug("子区 %s 在黑名单中", thread_id)
+                    logger.debug("子区 {thread_id} 在黑名单中")
                     return False
         else:
             logger.debug("子区继承父频道权限，跳过独立权限检查")

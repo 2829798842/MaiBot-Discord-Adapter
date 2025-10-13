@@ -37,7 +37,7 @@ class DiscordContentBuilder:
 
         def process(seg: Seg) -> None:
             if not getattr(seg, "type", None):
-                logger.debug("跳过缺少类型的消息段：%s", seg)
+                logger.debug(f"跳过缺少类型的消息段：{seg}")
                 return
 
             if seg.type == "thread_context":
@@ -50,7 +50,7 @@ class DiscordContentBuilder:
                     if isinstance(sub_segment, Seg):
                         process(sub_segment)
                     else:
-                        logger.debug("seglist 子项不是 Seg 实例，已跳过：%s", sub_segment)
+                        logger.debug(f"seglist 子项不是 Seg 实例，已跳过：{sub_segment}")
                 return
 
             if seg.type == "text":
@@ -69,7 +69,7 @@ class DiscordContentBuilder:
                 if isinstance(seg.data, str):
                     file_item = self._decode_image_to_attachment(seg.type, seg.data)
                 else:
-                    logger.debug("%s 段的 data 类型非字符串，已跳过：%s", seg.type, type(seg.data))
+                    logger.debug(f"{seg.type} 段的 data 类型非字符串，已跳过：{type(seg.data)}")
                 if file_item:
                     files.append(file_item)
                 else:
@@ -104,7 +104,7 @@ class DiscordContentBuilder:
             if seg.type == "reply":
                 return
 
-            logger.debug("暂不支持的消息段类型：%s", seg.type)
+            logger.debug(f"暂不支持的消息段类型：{seg.type}")
 
         process(message_segment)
 
@@ -144,7 +144,7 @@ class DiscordContentBuilder:
 
         mention_text: str = " ".join(parts)
         if mention_text:
-            logger.debug("渲染 mention 文本：%s", mention_text)
+            logger.debug(f"渲染 mention 文本：{mention_text}")
         return mention_text
 
     def _decode_image_to_attachment(self, seg_type: str, data: str) -> Optional[discord.File]:
@@ -164,7 +164,7 @@ class DiscordContentBuilder:
         try:
             decoded: bytes = base64.b64decode(str(data))
         except (ValueError, TypeError, binascii.Error) as exc:
-            logger.warning("解码 %s base64 数据失败：%s", seg_type, exc)
+            logger.warning(f"解码 {seg_type} base64 数据失败：{exc}")
             return None
 
         suffix: str = self._detect_image_suffix(decoded)
@@ -189,7 +189,7 @@ class DiscordContentBuilder:
         try:
             decoded: bytes = base64.b64decode(str(data))
         except (ValueError, TypeError, binascii.Error) as exc:
-            logger.warning("解码语音失败：%s", exc)
+            logger.warning(f"解码语音失败：{exc}")
             return None
 
         filename: str = f"voice_{int(time.time())}.wav"
