@@ -218,6 +218,7 @@ async def run_adapter():
 
             # 然后初始化后台任务管理器并启动监控
             background_task_manager.register_connection_monitor(discord_client)
+            background_task_manager.register_reaction_event_task(discord_client, message_handler)
             background_task_manager.start_all_tasks()
             logger.info("后台任务管理器已初始化并启动")
 

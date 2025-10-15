@@ -10,6 +10,7 @@ import discord
 from maim_message import BaseMessageInfo, UserInfo, GroupInfo, FormatInfo, MessageBase, Seg
 from ..logger import logger
 from ..config import global_config
+from .emoji_mapping import format_reaction_for_ai
 
 
 class DiscordMessageHandler:
@@ -139,24 +140,24 @@ class DiscordMessageHandler:
             thread_context_marker = False
             original_thread_id = None
             thread_name = None
-            
+
             if message.guild:
                 # 检查是否为Thread消息
                 is_thread_message = hasattr(message.channel, 'parent') and message.channel.parent is not None
-                
+
                 if is_thread_message:
                     # Thread消息：根据配置决定是否继承父频道记忆
                     thread_name = message.channel.name
                     parent_channel_name = (message.channel.parent.name 
                                          if hasattr(message.channel.parent, 'name') 
                                          else f"频道{message.channel.parent.id}")
-                    
+
                     if global_config.chat.inherit_channel_memory:
                         # 继承父频道记忆：使用父频道ID作为群组ID，但在消息中保留子区信息
                         group_id = str(message.channel.parent.id)  # 使用父频道ID实现记忆共享
                         # 格式: 父频道名称 @ 服务器名称 (用于显示和记忆)
                         group_name = f"{parent_channel_name} @ {message.guild.name}"
-                        
+
                         # 在群组名称中添加子区上下文信息，帮助AI理解当前在哪个子区
                         actual_context = f"[当前子区: {thread_name}] {group_name}"
                         group_info = GroupInfo(
@@ -165,7 +166,7 @@ class DiscordMessageHandler:
                             group_name=actual_context  # 包含子区上下文的名称
                         )
                         logger.debug(f"子区继承父频道记忆: 子区={thread_name}, 使用父频道ID={group_id}, 但保留子区上下文")
-                        
+
                         # 重要：标记这是一个从子区发出的消息，用于回复时的路由
                         thread_context_marker = True
                         original_thread_id = str(message.channel.id)
@@ -182,7 +183,7 @@ class DiscordMessageHandler:
                         logger.debug(f"子区使用独立记忆: 子区ID={group_id}")
                         thread_context_marker = False
                         original_thread_id = None
-                    
+
                     logger.debug(f"群组信息 (子区): {group_info.group_name} (ID: {group_info.group_id})")
                     logger.debug(f"父频道信息: {parent_channel_name} (ID: {message.channel.parent.id})")
                     logger.debug(f"实际子区信息: {thread_name} (ID: {message.channel.id})")
@@ -598,6 +599,188 @@ class DiscordMessageHandler:
         except (AttributeError, TypeError, ValueError) as e:
             logger.error(f"处理回复上下文时发生错误: {e}")
             return f"[回复消息{message.reference.message_id}]，说："
+
+    async def handle_reaction_event(self, event_type: str, payload: discord.RawReactionActionEvent):
+        """处理reaction事件
+        
+        Args:
+            event_type: 事件类型 ('reaction_add' 或 'reaction_remove')
+            payload: Discord reaction事件数据
+        """
+        try:
+            logger.debug(f"开始处理 {event_type} 事件:")
+            logger.debug(f"  消息ID: {payload.message_id}")
+            logger.debug(f"  用户ID: {payload.user_id}")
+            logger.debug(f"  Emoji: {payload.emoji}")
+            
+            # 导入discord_client以获取频道和用户信息
+            from .discord_client import discord_client
+            client = discord_client.client
+            if not client:
+                logger.warning("Discord客户端未初始化，忽略reaction事件")
+                return
+            
+            # 获取用户和成员信息
+            user: discord.abc.User | None = None
+            member: discord.Member | None = None
+
+            if payload.member:
+                member = payload.member
+                user = payload.member
+            else:
+                # 优先从 guild 中获取成员
+                guild = client.get_guild(payload.guild_id) if payload.guild_id else None
+                if guild:
+                    member = guild.get_member(payload.user_id)
+                    if not member:
+                        try:
+                            member = await guild.fetch_member(payload.user_id)
+                        except discord.NotFound:
+                            logger.warning(f"公会 {guild.id} 中找不到成员 {payload.user_id}")
+                        except discord.HTTPException as fetch_member_error:
+                            logger.error(f"获取成员 {payload.user_id} 信息失败: {fetch_member_error}")
+
+                if member:
+                    user = member
+                else:
+                    # 退回到用户级别
+                    try:
+                        user = await client.fetch_user(payload.user_id)
+                    except (discord.NotFound, discord.HTTPException) as fetch_user_error:
+                        logger.error(f"获取用户 {payload.user_id} 信息失败: {fetch_user_error}")
+                        return
+
+            if not user:
+                logger.error(f"无法获取reaction用户 {payload.user_id} 的信息")
+                return
+
+            user_id = user.id
+            # Discord API 提供 display_name 属性
+            user_display = getattr(user, "display_name", None) or user.name
+            server_nickname = getattr(member, "nick", None) if member else None
+            logger.debug(f"  用户: {user_display} (ID: {user_id})")
+            
+            # 获取频道信息
+            channel = client.get_channel(payload.channel_id)
+            if not channel:
+                try:
+                    channel = await client.fetch_channel(payload.channel_id)
+                except (discord.NotFound, discord.Forbidden):
+                    logger.warning(f"无法获取频道 {payload.channel_id}")
+                    return
+                except discord.HTTPException as fetch_channel_error:
+                    logger.error(f"获取频道 {payload.channel_id} 时发生错误: {fetch_channel_error}")
+                    return
+            
+            channel_name = channel.name if hasattr(channel, 'name') else 'DM'
+            
+            # 判断是否为子区
+            is_thread = isinstance(channel, discord.Thread)
+            
+            # 获取服务器信息
+            guild = client.get_guild(payload.guild_id) if payload.guild_id else None
+            guild_name = guild.name if guild else "私信"
+            
+            logger.debug(f"  频道: {channel_name} (ID: {payload.channel_id})")
+            logger.debug(f"  服务器: {guild_name}")
+            logger.debug(f"  是否子区: {is_thread}")
+            
+            platform_name = global_config.maibot_server.platform_name
+
+            # 构建用户信息
+            user_info = UserInfo(
+                platform=platform_name,
+                user_id=str(user_id),
+                user_nickname=user_display,
+                user_cardname=server_nickname
+            )
+
+            # 构建群组信息
+            group_info = None
+            if guild:
+                if is_thread:
+                    parent_channel = getattr(channel, 'parent', None)
+                    parent_name = getattr(parent_channel, 'name', f"频道{parent_channel.id}" if parent_channel else channel_name)
+                    thread_name = getattr(channel, 'name', f"子区{channel.id}")
+
+                    if global_config.chat.inherit_channel_memory:
+                        group_id = str(parent_channel.id) if parent_channel else str(channel.id)
+                        display_name = f"[Reaction子区: {thread_name}] {parent_name} @ {guild_name}"
+                    else:
+                        group_id = str(channel.id)
+                        display_name = f"{thread_name} @ {guild_name}"
+
+                    group_info = GroupInfo(
+                        platform=platform_name,
+                        group_id=group_id,
+                        group_name=display_name
+                    )
+                else:
+                    channel_display = getattr(channel, 'name', f"频道{channel.id}")
+                    group_info = GroupInfo(
+                        platform=platform_name,
+                        group_id=str(channel.id),
+                        group_name=f"{channel_display} @ {guild_name}"
+                    )
+            
+            # 获取emoji信息
+            emoji = payload.emoji
+            if emoji.is_unicode_emoji():
+                emoji_str = emoji.name  # Unicode emoji
+                emoji_name = None
+            else:
+                # 自定义emoji
+                emoji_str = f"<:{emoji.name}:{emoji.id}>"
+                emoji_name = emoji.name
+            
+            logger.debug(f"  Emoji类型: {'Unicode' if emoji.is_unicode_emoji() else '自定义'}")
+            logger.debug(f"  Emoji值: {emoji_str}")
+            
+            # 格式化reaction描述
+            action_text = "添加了" if event_type == "reaction_add" else "移除了"
+            description = format_reaction_for_ai(emoji_str, emoji_name, 1, user_display)
+            # 调整描述文本
+            description = description.replace("添加了", action_text)
+            
+            logger.debug(f"  格式化描述: {description}")
+            
+            # 构建notify类型消息段
+            notify_data = {
+                "type": "reaction",
+                "action": "add" if event_type == "reaction_add" else "remove",
+                "message_id": str(payload.message_id),
+                "emoji": emoji_str,
+                "description": description
+            }
+            
+            notify_seg = Seg(type="notify", data=notify_data)
+            
+            # 构建 BaseMessageInfo
+            base_message_info = BaseMessageInfo(
+                platform=platform_name,
+                user_info=user_info,
+                group_info=group_info,
+                format_info=FormatInfo()
+            )
+            
+            # 构建完整的 MessageBase
+            maim_message = MessageBase(
+                message_info=base_message_info,
+                message_segment=notify_seg,
+                raw_message=description
+            )
+            
+            # 发送到MaiBot Core
+            if self.router:
+                logger.debug(f"发送reaction事件到MaiBot: {description}")
+                await self.router.send_message(maim_message)
+                logger.debug("Reaction事件已成功发送到MaiBot")
+            else:
+                logger.error("Router未初始化，无法发送reaction事件")
+                
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(f"处理reaction事件时发生错误: {e}")
+            logger.error(f"错误详情: {traceback.format_exc()}")
 
 
 # 创建全局消息处理器实例

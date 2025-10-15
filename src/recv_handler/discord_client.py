@@ -44,10 +44,12 @@ class DiscordClientManager:
         intents.guilds = discord_intents.get("guilds", True)
         intents.dm_messages = discord_intents.get("dm_messages", True)
         intents.message_content = discord_intents.get("message_content", True)
+        intents.reactions = discord_intents.get("reactions", True)  # 启用reaction权限
 
         logger.debug(
             f"Discord 权限意图: messages={intents.messages}, guilds={intents.guilds}, "
-            f"dm_messages={intents.dm_messages}, message_content={intents.message_content}"
+            f"dm_messages={intents.dm_messages}, message_content={intents.message_content}, "
+            f"reactions={intents.reactions}"
         )
 
         # 创建 Discord 客户端
