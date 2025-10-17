@@ -14,9 +14,6 @@ from src.utils import async_task_manager
 from src.config import global_config
 from src.background_tasks import background_task_manager
 
-# 消息队列
-message_queue = asyncio.Queue()
-
 # 全局关闭事件
 shutdown_event = asyncio.Event()
 
@@ -24,20 +21,20 @@ shutdown_event = asyncio.Event()
 async def message_process():
     """消息处理协程
     
-    从队列中获取 Discord 消息并转发到 MaiBot Core
+    直接从Discord客户端的队列中获取并处理消息
     """
     logger.info("消息处理器已启动")
     while not shutdown_event.is_set():
         try:
-            # 使用超时避免无限等待
-            message = await asyncio.wait_for(message_queue.get(), timeout=1.0)
-            logger.debug(f"消息处理器: 开始处理消息 {message.id}")
+            message = await asyncio.wait_for(discord_client.message_queue.get(), timeout=1.0)
+            logger.debug(f"开始处理消息 {message.id}")
+
             # 处理 Discord 消息
             await message_handler.handle_discord_message(message)
-            message_queue.task_done()
-            logger.debug(f"消息处理器: 消息 {message.id} 处理完成")
+            discord_client.message_queue.task_done()
+
+            logger.debug(f"消息 {message.id} 处理完成")
         except asyncio.TimeoutError:
-            # 超时正常，继续检查关闭事件
             continue
         except Exception as e:
             logger.error(f"处理消息时发生错误: {e}")
@@ -45,39 +42,6 @@ async def message_process():
             await asyncio.sleep(0.1)
 
     logger.info("消息处理器已停止")
-
-
-async def discord_message_collector():
-    """Discord 消息收集器
-    
-    从 Discord 客户端收集消息并放入队列
-    """
-    logger.info("消息收集器已启动，正在等待 Discord 消息...")
-    message_check_count = 0
-    while not shutdown_event.is_set():
-        try:
-            if not discord_client.message_queue.empty():
-                message = await asyncio.wait_for(discord_client.message_queue.get(), timeout=0.1)
-                await message_queue.put(message)
-                discord_client.message_queue.task_done()
-                logger.debug(f"消息收集器: 已将消息 {message.id} 从 Discord 队列转移到主队列")
-            else:
-                message_check_count += 1
-                if message_check_count % 1000 == 0:  # 每 10 秒打印一次状态
-                    if hasattr(discord_client, 'is_connected') and discord_client.is_connected:
-                        logger.debug("消息收集器: 正在等待消息... ")
-                    else:
-                        logger.debug("消息收集器: Discord未连接，正在等待重连...")
-                await asyncio.sleep(0.01)
-        except asyncio.TimeoutError:
-            # 超时正常，继续循环
-            continue
-        except Exception as e:
-            logger.error(f"收集 Discord 消息时发生错误: {e}")
-            logger.error(f"错误详情: {traceback.format_exc()}")
-            await asyncio.sleep(0.1)
-
-    logger.info("消息收集器已停止")
 
 
 async def graceful_shutdown():
@@ -189,20 +153,11 @@ async def run_adapter():
 
         # 启动消息处理器
         try:
-            message_task = asyncio.create_task(message_process())
-            tasks.append(message_task)
+            processor_task = asyncio.create_task(message_process())
+            tasks.append(processor_task)
             logger.info("消息处理任务已创建")
         except Exception as e:
             logger.error(f"创建消息处理任务失败: {e}")
-            return
-
-        # 启动消息收集器
-        try:
-            collector_task = asyncio.create_task(discord_message_collector())
-            tasks.append(collector_task)
-            logger.info("消息收集任务已创建")
-        except Exception as e:
-            logger.error(f"创建消息收集任务失败: {e}")
             return
 
         # 启动 Discord 客户端

@@ -17,7 +17,7 @@ UNICODE_EMOJI_MAPPING = {
     "😉": ("眨眼", "wink"),
     "😊": ("微笑脸红", "blush"),
     "😇": ("天使笑", "innocent"),
-    
+
     # 爱心类
     "❤️": ("爱心", "heart"),
     "🧡": ("橙色心", "orange_heart"),
@@ -36,7 +36,7 @@ UNICODE_EMOJI_MAPPING = {
     "💓": ("心跳", "heartbeat"),
     "💞": ("旋转的心", "revolving_hearts"),
     "💝": ("心形礼物", "gift_heart"),
-    
+
     # 手势类
     "👍": ("赞", "thumbsup"),
     "👎": ("踩", "thumbsdown"),
@@ -57,7 +57,7 @@ UNICODE_EMOJI_MAPPING = {
     "🤚": ("抬手背", "raised_back_of_hand"),
     "🖐️": ("张开手掌", "hand_splayed"),
     "💪": ("肌肉/加油", "muscle"),
-    
+
     # 表情符号
     "😢": ("哭泣", "cry"),
     "😭": ("大哭", "sob"),
@@ -83,7 +83,7 @@ UNICODE_EMOJI_MAPPING = {
     "😫": ("疲惫", "tired_face"),
     "😩": ("厌倦", "weary"),
     "🥺": ("恳求", "pleading_face"),
-    
+
     # 符号类
     "✅": ("对勾/完成", "white_check_mark"),
     "❌": ("叉号/错误", "x"),
@@ -103,7 +103,7 @@ UNICODE_EMOJI_MAPPING = {
     "🥇": ("金牌", "first_place"),
     "🥈": ("银牌", "second_place"),
     "🥉": ("铜牌", "third_place"),
-    
+
     # 动物类
     "🐶": ("狗", "dog"),
     "🐱": ("猫", "cat"),
@@ -119,7 +119,7 @@ UNICODE_EMOJI_MAPPING = {
     "🐮": ("牛", "cow"),
     "🐷": ("猪", "pig"),
     "🐸": ("青蛙", "frog"),
-    
+
     # 食物类
     "🍕": ("披萨", "pizza"),
     "🍔": ("汉堡", "hamburger"),
@@ -137,7 +137,7 @@ UNICODE_EMOJI_MAPPING = {
     "🍫": ("巧克力", "chocolate_bar"),
     "🍬": ("糖果", "candy"),
     "🍭": ("棒棒糖", "lollipop"),
-    
+
     # 活动类
     "⚽": ("足球", "soccer"),
     "🏀": ("篮球", "basketball"),
@@ -152,7 +152,7 @@ UNICODE_EMOJI_MAPPING = {
     "💻": ("电脑", "computer"),
     "⌨️": ("键盘", "keyboard"),
     "🖱️": ("鼠标", "mouse_three_button"),
-    
+
     # 其他常用
     "💤": ("睡觉", "zzz"),
     "💭": ("思考泡泡", "thought_balloon"),
@@ -187,11 +187,11 @@ def get_emoji_meaning(emoji_str: str, emoji_name: str = None) -> tuple[str, str]
     # 优先查找Unicode emoji
     if emoji_str in UNICODE_EMOJI_MAPPING:
         return UNICODE_EMOJI_MAPPING[emoji_str]
-    
+
     # 查找自定义emoji
     if emoji_name and emoji_name in CUSTOM_EMOJI_MAPPING:
         return CUSTOM_EMOJI_MAPPING[emoji_name]
-    
+
     # 如果都找不到，返回原始名称
     display_name = emoji_name if emoji_name else emoji_str
     return (f"表情「{display_name}」", display_name)
@@ -210,7 +210,7 @@ def format_reaction_for_ai(emoji_str: str, emoji_name: str, count: int, user_nam
         str: 格式化后的文本描述
     """
     meaning, _ = get_emoji_meaning(emoji_str, emoji_name)
-    
+
     if count == 1:
         return f"用户{user_name}添加了{meaning}表情"
     else:

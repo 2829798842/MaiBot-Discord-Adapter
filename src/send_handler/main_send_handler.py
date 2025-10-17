@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import traceback
+
 from typing import List, Optional, Sequence
 
 import discord
@@ -11,7 +13,7 @@ from maim_message import BaseMessageInfo, MessageBase, Seg
 from ..logger import logger
 from .message_send_handler import DiscordContentBuilder
 from .thread_send_handler import ThreadRoutingManager
-
+from ..recv_handler.discord_client import discord_client
 
 class DiscordSendHandler:
     """MaiBot 到 Discord 的消息调度器。
@@ -120,10 +122,10 @@ class DiscordSendHandler:
         """
         segment = message.message_segment
         command_data = segment.data if hasattr(segment, 'data') else {}
-        
         # 检查是否为 reaction 命令
         command_type = command_data.get('type', '')
-        
+
+        # 处理reaction命令
         if command_type == 'reaction':
             await self._handle_reaction_command(message, command_data)
         else:
@@ -133,7 +135,7 @@ class DiscordSendHandler:
         """处理 reaction 命令（添加或移除表情）
         
         Args:
-            _message: MaiBot 消息对象（未使用）
+            _message: MaiBot 消息对象
             command_data: 命令数据，包含:
                 - action: 'add' 或 'remove'
                 - message_id: 目标消息ID
@@ -148,15 +150,16 @@ class DiscordSendHandler:
             target_message_id = command_data.get('message_id')
             channel_id = command_data.get('channel_id')
             emoji_str = command_data.get('emoji')
-            
             if not target_message_id or not channel_id or not emoji_str:
-                logger.error(f"Reaction命令缺少必要参数: {command_data}")
+                logger.error(f"Reaction命令缺少必要参数，需要 message_id、channel_id 和 emoji: {command_data}")
                 return
 
-            logger.debug(f"处理reaction命令: action={action}, message_id={target_message_id}, emoji={emoji_str}")
+            logger.debug(
+                f"处理reaction命令: action={action}, "
+                f"message_id={target_message_id}, emoji={emoji_str}"
+            )
 
             # 获取 Discord 客户端
-            from ..recv_handler.discord_client import discord_client
             client = discord_client.client
             if not client or not getattr(client, 'user', None):
                 logger.error("Discord客户端未就绪，无法执行reaction命令")
@@ -165,8 +168,8 @@ class DiscordSendHandler:
             try:
                 channel_id_int = int(channel_id)
                 message_id_int = int(target_message_id)
-            except (TypeError, ValueError):
-                logger.error(f"Reaction命令的消息或频道ID格式不正确: {command_data}")
+            except (TypeError, ValueError) as e:
+                logger.error(f"Reaction命令的消息或频道ID格式不正确: {command_data}, 错误: {e}")
                 return
 
             # 获取频道
@@ -174,23 +177,26 @@ class DiscordSendHandler:
             if not channel:
                 try:
                     channel = await client.fetch_channel(channel_id_int)
-                except (discord.NotFound, discord.Forbidden):
-                    logger.error(f"无法找到频道: {channel_id_int}")
+                except (discord.NotFound, discord.Forbidden) as e:
+                    logger.error(f"无法找到频道 {channel_id_int}: {e}")
                     return
-                except discord.HTTPException as fetch_error:
-                    logger.error(f"获取频道 {channel_id_int} 时发生错误: {fetch_error}")
+                except discord.HTTPException as e:
+                    logger.error(f"获取频道 {channel_id_int} 时发生错误: {e}")
                     return
 
             # 获取消息
             try:
                 target_message = await channel.fetch_message(message_id_int)
             except discord.NotFound:
-                logger.error(f"无法找到消息: {message_id_int}")
+                logger.error(f"无法找到消息 {message_id_int}")
                 return
             except discord.Forbidden:
-                logger.error(f"没有权限访问消息: {message_id_int}")
+                logger.error(f"没有权限访问消息 {message_id_int}")
                 return
-            
+            except discord.HTTPException as e:
+                logger.error(f"获取消息 {message_id_int} 时发生错误: {e}")
+                return
+
             # 执行添加或移除 reaction
             if action == 'add':
                 await target_message.add_reaction(emoji_str)
@@ -200,14 +206,14 @@ class DiscordSendHandler:
                 logger.info(f"成功从消息 {message_id_int} 移除表情: {emoji_str}")
             else:
                 logger.warning(f"未知的reaction操作: {action}")
-                
         except discord.HTTPException as e:
-            logger.error(f"执行reaction命令时发生HTTP错误: {e}")
+            logger.error(f"执行reaction命令时发生Discord HTTP错误: {e}")
+            logger.error(f"错误详情: {traceback.format_exc()}")
         except (ValueError, AttributeError) as e:
-            logger.error(f"执行reaction命令时发生错误: {e}")
+            logger.error(f"执行reaction命令时发生参数错误: {e}")
+            logger.error(f"错误详情: {traceback.format_exc()}")
         except Exception as e:
             logger.error(f"执行reaction命令时发生未知错误: {e}")
-            import traceback
             logger.error(f"错误详情: {traceback.format_exc()}")
 
     async def _handle_notify(self, message: MessageBase) -> None:

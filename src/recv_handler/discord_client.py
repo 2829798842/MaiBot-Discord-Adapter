@@ -198,6 +198,8 @@ class DiscordClientManager:
         # 标记为未连接
         self.is_connected = False
 
+        logger.info("Discord客户端已重置")
+
     async def start(self):
         """启动 Discord 客户端
         
@@ -278,7 +280,7 @@ class DiscordClientManager:
     async def force_reconnect(self):
         """强制重连Discord客户端
         
-        由background_tasks调用，用于处理连接断开的情况
+        重连后会自动重新注册所有事件处理器。
         """
         if self.is_shutting_down:
             logger.debug("系统正在关闭，跳过重连")
@@ -343,6 +345,8 @@ class DiscordClientManager:
                     if attempt > 0:
                         logger.info(f"第 {attempt} 次重连尝试...")
                         await asyncio.sleep(retry_delay)
+                        # 重要: 每次重连失败后必须重新创建client对象
+                        # Discord client只能start一次！
                         await self._reset_client()
 
                     logger.debug("开始连接到Discord...")
@@ -355,13 +359,11 @@ class DiscordClientManager:
 
                 except (discord.LoginFailure, discord.HTTPException) as e:
                     logger.error(f"重连过程中出现认证错误，停止重连: {e}")
-                    self.is_reconnecting = False
-                    return
+                    return  # finally块会自动重置is_reconnecting
 
                 except asyncio.CancelledError:
                     logger.info("重连任务被取消")
-                    self.is_reconnecting = False
-                    raise
+                    raise  # finally块会自动重置is_reconnecting
 
                 except Exception as e:
                     logger.warning(f"第 {attempt + 1} 次重连失败: {e}")
