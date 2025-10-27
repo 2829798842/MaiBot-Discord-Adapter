@@ -4,6 +4,7 @@
 
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
+from .voice_config import VoiceConfig
 
 
 @dataclass
@@ -107,12 +108,14 @@ class GlobalConfig:
         chat (ChatConfig): 聊天控制配置
         maibot_server (MaiBotServerConfig): MaiBot 服务器配置
         debug (DebugConfig): 调试配置
+        voice (VoiceConfig): 语音功能配置
     """
 
     discord: DiscordConfig = None
     chat: ChatConfig = None
     maibot_server: MaiBotServerConfig = None
     debug: DebugConfig = None
+    voice: VoiceConfig = None
 
     def __post_init__(self):
         if self.discord is None:
@@ -123,3 +126,5 @@ class GlobalConfig:
             self.maibot_server = MaiBotServerConfig()
         if self.debug is None:
             self.debug = DebugConfig()
+        if self.voice is None:
+            self.voice = VoiceConfig()

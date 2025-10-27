@@ -63,8 +63,109 @@ messages = true
 guilds = true
 dm_messages = true
 message_content = true
+voice_states = true  # 语音状态权限，启用语音功能时需要
 
 # Discord 连接重试设置
 [discord.retry]
 retry_delay = 5                  # 重试间隔（秒）
 connection_check_interval = 30  # 连接状态检查间隔（秒），建议30秒以上避免频繁检查
+
+# 语音功能设置
+[voice]
+enabled = false  # 是否启用语音功能
+voice_channel_whitelist = []  # 语音频道白名单（右键点击语音频道 -> 复制频道 ID）
+                               # 示例: [1234567890, 9876543210]
+                               # 单个频道：Bot 固定在该频道
+                               # 多个频道：Bot 自动跟随有人的频道
+check_interval = 30       # 频道切换检查间隔（秒），仅在白名单有多个频道时生效
+tts_provider = "azure"    # TTS 提供商（可选：azure, acgnai, siliconflow）
+stt_provider = "azure"    # STT 提供商（可选：azure, aliyun, siliconflow）
+
+
+# Azure 语音服务配置
+[voice.azure]
+subscription_key = "your_azure_speech_key"  # Azure 语音服务密钥
+region = "eastasia"  # Azure 服务区域（eastasia, southeastasia, westus 等）
+tts_voice = "zh-CN-XiaoxiaoNeural"  # TTS 语音名称
+                                     # 更多语音选项: https://learn.microsoft.com/azure/cognitive-services/speech-service/language-support
+stt_language = "zh-CN"  # STT 识别语言
+
+# 阿里云语音服务配置
+[voice.aliyun]
+access_key_id = ""
+access_key_secret = ""
+app_key = ""
+
+# 第三方 AcgNAI TTS 配置
+[voice.acgnai]
+api_base = "https://tts.acgnai.top"  # API 基础地址
+api_key = ""  # API 密钥
+
+# SiliconFlow 语音服务配置
+[voice.siliconflow]
+api_key = ""  # SiliconFlow API 密钥（从 https://cloud.siliconflow.cn/account/ak 获取）
+api_base = "https://api.siliconflow.cn/v1"  # API 基础地址
+tts_model = "fnlp/MOSS-TTSD-v0.5"  # TTS 模型名称
+tts_voice = "fnlp/MOSS-TTSD-v0.5:alex"  # TTS 语音音色
+                                         # 可选音色: alex, anna, bella, benjamin, charles, claire, david, diana
+stt_model = "FunAudioLLM/SenseVoiceSmall"  # STT 模型名称
+response_format = "pcm"  # 音频输出格式：mp3, opus, wav, pcm
+sample_rate = 48000      # 采样率（Hz）
+speed = 1.0              # 语速（0.25-4.0）
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

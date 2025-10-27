@@ -38,6 +38,7 @@ class DiscordSendHandler:
         self.MAX_MESSAGE_LENGTH = 2000 # pylint: disable=invalid-name
         self._thread_manager = ThreadRoutingManager()
         self._content_builder = DiscordContentBuilder()
+        self.voice_manager = None  # 语音管理器（由 discord_client 设置）
 
     def update_thread_context(self, parent_channel_id: str, thread_id: str) -> None:
         """记录父频道与活跃子区的关联关系。
@@ -212,7 +213,7 @@ class DiscordSendHandler:
         except (ValueError, AttributeError) as e:
             logger.error(f"执行reaction命令时发生参数错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"执行reaction命令时发生未知错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
 
@@ -242,6 +243,16 @@ class DiscordSendHandler:
         message_id: Optional[str] = getattr(message_info, "message_id", None)
         logger.debug(f"开始向 Discord 发送消息：{message_id}")
 
+        # 检查是否为语音频道消息
+        group_info = getattr(message_info, "group_info", None)
+        if group_info:
+            group_id = getattr(group_info, "group_id", "")
+            if group_id.startswith("voice_"):
+                # 语音频道消息，转为 TTS 播报
+                await self._handle_voice_channel_message(message, group_id)
+                return
+
+        # 原有的文本频道处理逻辑
         target_channel: Optional[discord.abc.Messageable] = await self._thread_manager.resolve_target_channel(message)
         if target_channel is None:
             logger.warning(f"无法解析目标频道，放弃发送：{message_id}")
@@ -476,6 +487,70 @@ class DiscordSendHandler:
             await channel.send(content=content, reference=reference)
         except (discord.HTTPException, discord.Forbidden) as exc:
             logger.error(f"发送消息片段失败：{exc}")
+
+    async def _handle_voice_channel_message(self, message: MessageBase, group_id: str) -> None:
+        """处理语音频道消息（TTS 播报）
+        
+        Args:
+            message: MaiBot 消息对象
+            group_id: 群组 ID (格式: voice_{channel_id})
+            
+        Returns:
+            None: 播报完成后无返回值
+        """
+        try:
+            # 检查语音管理器是否可用
+            if not self.voice_manager:
+                logger.warning("语音管理器未初始化，无法播报消息")
+                return
+
+            # 提取频道 ID
+            try:
+                channel_id = int(group_id.replace("voice_", ""))
+            except (ValueError, AttributeError):
+                logger.error(f"无效的语音频道 group_id: {group_id}")
+                return
+
+            # 提取文本内容
+            text = await self._extract_text_from_message(message)
+            if not text or not text.strip():
+                logger.debug("消息无文本内容，跳过 TTS 播报")
+                return
+
+            logger.debug(f"准备播报消息到语音频道 {channel_id}: {text[:50]}...")
+
+            # 调用语音管理器播报
+            success = await self.voice_manager.speak(text, channel_id)
+            if success:
+                logger.info(f"成功播报消息到语音频道 {channel_id}")
+            else:
+                logger.warning(f"播报消息到语音频道 {channel_id} 失败")
+
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(f"处理语音频道消息失败: {e}")
+            logger.debug(f"错误详情: {traceback.format_exc()}")
+
+    async def _extract_text_from_message(self, message: MessageBase) -> str:
+        """从消息中提取纯文本内容
+        
+        Args:
+            message: MaiBot 消息对象
+            
+        Returns:
+            提取的文本内容
+        """
+        try:
+            segment = message.message_segment
+            if not segment:
+                return ""
+
+            # 使用现有的 content_builder 提取文本
+            content, _ = self._content_builder.build(segment)
+            return content or ""
+
+        except Exception as e:  # pylint: disable=broad-except
+            logger.debug(f"提取消息文本失败: {e}")
+            return ""
 
 
 send_handler = DiscordSendHandler()
