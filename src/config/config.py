@@ -6,6 +6,9 @@ import os
 import logging
 import toml
 from .config_base import GlobalConfig, DiscordConfig, ChatConfig, MaiBotServerConfig, DebugConfig
+from .voice_config import VoiceConfig, AzureVoiceConfig, AliyunVoiceConfig, AcgNAIVoiceConfig, SiliconFlowVoiceConfig
+
+logger = logging.getLogger(__name__)
 
 
 def load_config(config_path: str = "config.toml") -> GlobalConfig:
@@ -67,6 +70,63 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
             log_file=debug_config.get('log_file', 'logs/discord_adapter.log')
         )
 
+        # 加载语音配置
+        voice_config_data = config_data.get('voice', {})
+        if voice_config_data:
+            try:
+                # 加载 Azure 配置
+                azure_data = voice_config_data.get('azure', {})
+                azure_cfg = AzureVoiceConfig(
+                    subscription_key=azure_data.get('subscription_key', ''),
+                    region=azure_data.get('region', 'eastasia'),
+                    tts_voice=azure_data.get('tts_voice', 'zh-CN-XiaoxiaoNeural'),
+                    stt_language=azure_data.get('stt_language', 'zh-CN')
+                )
+
+                # 加载阿里云配置
+                aliyun_data = voice_config_data.get('aliyun', {})
+                aliyun_cfg = AliyunVoiceConfig(
+                    access_key_id=aliyun_data.get('access_key_id', ''),
+                    access_key_secret=aliyun_data.get('access_key_secret', ''),
+                    app_key=aliyun_data.get('app_key', '')
+                )
+
+                # 加载 AcgNAI 配置
+                acgnai_data = voice_config_data.get('acgnai', {})
+                acgnai_cfg = AcgNAIVoiceConfig(
+                    api_base=acgnai_data.get('api_base', 'https://tts.acgnai.top'),
+                    api_key=acgnai_data.get('api_key')
+                )
+
+                # 加载 SiliconFlow 配置
+                siliconflow_data = voice_config_data.get('siliconflow', {})
+                siliconflow_cfg = SiliconFlowVoiceConfig(
+                    api_key=siliconflow_data.get('api_key', ''),
+                    api_base=siliconflow_data.get('api_base', 'https://api.siliconflow.cn/v1'),
+                    tts_model=siliconflow_data.get('tts_model', 'fnlp/MOSS-TTSD-v0.5'),
+                    tts_voice=siliconflow_data.get('tts_voice', 'fnlp/MOSS-TTSD-v0.5:alex'),
+                    stt_model=siliconflow_data.get('stt_model', 'FunAudioLLM/SenseVoiceSmall'),
+                    response_format=siliconflow_data.get('response_format', 'pcm'),
+                    sample_rate=siliconflow_data.get('sample_rate', 48000),
+                    speed=siliconflow_data.get('speed', 1.0)
+                )
+
+                # 创建 VoiceConfig
+                config.voice = VoiceConfig(
+                    enabled=voice_config_data.get('enabled', False),
+                    voice_channel_whitelist=voice_config_data.get('voice_channel_whitelist', []),
+                    check_interval=voice_config_data.get('check_interval', 10),
+                    tts_provider=voice_config_data.get('tts_provider', 'azure'),
+                    stt_provider=voice_config_data.get('stt_provider', 'azure'),
+                    azure=azure_cfg,
+                    aliyun=aliyun_cfg,
+                    acgnai=acgnai_cfg,
+                    siliconflow=siliconflow_cfg
+                )
+            except (KeyError, TypeError, ValueError) as e:
+                # 忽略 voice 配置解析错误，保持默认
+                logger.warning(f"加载语音配置失败，使用默认配置: {e}")  # pylint: disable=logging-fstring-interpolation
+
         # 验证必要配置
         if not config.discord.token or config.discord.token == "your_discord_bot_token_":
             raise ValueError("请在配置文件中设置有效的 Discord Bot Token")
@@ -93,8 +153,6 @@ def is_user_allowed(config: GlobalConfig, user_id: int,
     Returns:
         bool: 是否允许该用户使用
     """
-    logger = logging.getLogger(__name__)
-
     chat_config = config.chat
     logger.debug("权限检查开始: 用户={user_id}, 服务器={guild_id}, "
                  "频道={channel_id}, 子区={thread_id}, 是否子区={is_thread}")

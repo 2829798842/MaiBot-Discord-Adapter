@@ -1,4 +1,5 @@
 discord.py[voice]>=2.3.0
+discord-ext-voice-recv>=0.4.0
 maim_message
 loguru>=0.7.0
 toml

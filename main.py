@@ -36,7 +36,7 @@ async def message_process():
             logger.debug(f"消息 {message.id} 处理完成")
         except asyncio.TimeoutError:
             continue
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"处理消息时发生错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
             await asyncio.sleep(0.1)
@@ -56,7 +56,7 @@ async def graceful_shutdown():
         try:
             background_task_manager.stop_all_tasks()
             logger.info("后台任务已停止")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"停止后台任务时出错: {e}")
 
         # 关闭 Discord 客户端
@@ -65,7 +65,7 @@ async def graceful_shutdown():
             logger.info("Discord 客户端已关闭")
         except asyncio.TimeoutError:
             logger.warning("Discord 客户端关闭超时")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"关闭 Discord 客户端时出错: {e}")
 
         # 关闭 MaiBot 通信
@@ -76,13 +76,13 @@ async def graceful_shutdown():
             logger.warning("MaiBot 通信关闭超时")
         except asyncio.CancelledError:
             logger.debug("MaiBot 通信任务已被取消")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"关闭 MaiBot 通信时出错: {e}")
 
         # 取消管理器中的任务
         try:
             await async_task_manager.cancel_all()
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"取消任务管理器时出错: {e}")
 
         # 取消剩余任务
@@ -102,12 +102,12 @@ async def graceful_shutdown():
                 )
             except asyncio.TimeoutError:
                 logger.warning("部分任务取消超时")
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 logger.debug(f"任务取消时出现异常: {e}")
 
         logger.info("Discord 适配器已成功关闭")
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error(f"关闭适配器时出现错误: {e}")
 
 
@@ -147,7 +147,7 @@ async def run_adapter():
             mmc_task = asyncio.create_task(mmc_start_com())
             tasks.append(mmc_task)
             logger.info("MaiBot 通信任务已创建")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"创建 MaiBot 通信任务失败: {e}")
             return
 
@@ -156,7 +156,7 @@ async def run_adapter():
             processor_task = asyncio.create_task(message_process())
             tasks.append(processor_task)
             logger.info("消息处理任务已创建")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"创建消息处理任务失败: {e}")
             return
 
@@ -171,13 +171,18 @@ async def run_adapter():
             # 等待一小段时间让Discord客户端开始连接
             await asyncio.sleep(2)
 
+            # 将 voice_manager 传递给 send_handler
+            if discord_client.voice_manager:
+                send_handler.voice_manager = discord_client.voice_manager
+                logger.info("语音管理器已连接到发送处理器")
+
             # 然后初始化后台任务管理器并启动监控
             background_task_manager.register_connection_monitor(discord_client)
             background_task_manager.register_reaction_event_task(discord_client, message_handler)
             background_task_manager.start_all_tasks()
             logger.info("后台任务管理器已初始化并启动")
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"创建 Discord 客户端任务失败: {e}")
             # Discord 失败但仍然可以继续运行其他组件
 
@@ -203,7 +208,7 @@ async def run_adapter():
                     if not task.cancelled():
                         task.result()  # 获取结果以检查异常
                         logger.warning(f"任务意外结束: {task}")
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-except
                     if task == discord_task and "Cannot connect to host discord.com" in str(e):
                         logger.error("Discord 连接失败，可能是网络问题或 Token 无效")
                     else:
@@ -218,7 +223,7 @@ async def run_adapter():
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error(f"运行适配器时发生错误: {e}")
     finally:
         # 确保优雅关闭
@@ -232,7 +237,7 @@ if __name__ == "__main__":
             global_config.discord.token == "your_discord_bot_token_"):
             logger.error("请在 config.toml 文件中设置有效的 Discord Bot Token")
             sys.exit(1)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error(f"配置检查失败: {e}")
         sys.exit(1)
 
@@ -246,7 +251,7 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
         logger.info("接收到键盘中断")
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.exception(f"主程序异常: {str(e)}")
         sys.exit(1)
     finally:
