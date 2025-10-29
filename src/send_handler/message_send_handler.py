@@ -216,7 +216,9 @@ class DiscordContentBuilder:
             return "webp"
         if image_bytes.startswith(b"BM"):
             return "bmp"
-        if image_bytes.startswith(b"\x00\x00\x01\x00") or image_bytes.startswith(b"\x00\x00\x02\x00"):
+        if image_bytes.startswith(b"\x00\x00\x01\x00") or (
+                image_bytes.startswith(b"\x00\x00\x02\x00")
+                ):
             return "ico"
         return "bin"
 

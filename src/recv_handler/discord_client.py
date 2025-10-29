@@ -189,7 +189,9 @@ class DiscordClientManager:
         except Exception as e:  # pylint: disable=broad-except
             logger.error(f"初始化语音功能失败: {e}")
 
-    async def _on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    async def _on_voice_state_update(
+        self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
+        ):
         """语音状态更新事件处理器"""
         if self.voice_manager:
             await self.voice_manager.on_voice_state_update(member, before, after)
@@ -246,7 +248,10 @@ class DiscordClientManager:
             channel_id = message.channel.id
 
             # 检查是否为子区消息
-            is_thread_message = hasattr(message.channel, 'parent') and message.channel.parent is not None
+            is_thread_message = (
+                hasattr(message.channel, 'parent')
+                and message.channel.parent is not None
+            )
             thread_id = None
 
             if is_thread_message:
@@ -258,9 +263,19 @@ class DiscordClientManager:
                 else:
                     logger.debug(f"子区消息使用独立权限: 子区ID={thread_id}")
 
-            logger.debug(f"权限检查: 用户ID={message.author.id}, 服务器ID={guild_id}, 频道ID={channel_id}, 子区ID={thread_id}, 是否子区={is_thread_message}")
+            logger.debug(
+                f"权限检查: 用户ID={message.author.id}, 服务器ID={guild_id}, "
+                f"频道ID={channel_id}, 子区ID={thread_id}, 是否子区={is_thread_message}"
+            )
 
-            if not is_user_allowed(global_config, message.author.id, guild_id, channel_id, thread_id, is_thread_message):
+            if not is_user_allowed(
+                global_config,
+                message.author.id,
+                guild_id,
+                channel_id,
+                thread_id,
+                is_thread_message,
+            ):
                 if is_thread_message:
                     logger.warning(f"用户 {message.author.id} 或子区 {thread_id} 不在允许列表中，忽略消息")
                 else:
