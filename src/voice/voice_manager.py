@@ -6,6 +6,7 @@ from typing import Optional
 import asyncio
 import io
 import subprocess
+import traceback
 import discord
 from discord import VoiceClient
 from discord.ext import voice_recv
@@ -211,7 +212,7 @@ class VoiceManager:
         self._voice_sink: Optional[VoiceDataSink] = None
         self._stt_callback = None  # 识别结果回调函数
 
-        logger.info("✓ discord-ext-voice-recv 支持已启用")
+
 
         logger.info(
             f"语音管理器已初始化 [启用: {self.enabled}, "
@@ -379,7 +380,10 @@ class VoiceManager:
             # 麦克风关闭 - 处理录音数据
             logger.info(f"检测到用户 {member.display_name} 关闭麦克风")
             if self._voice_sink:
+                logger.debug("开始处理录音数据...")
                 await self._process_user_audio(member)
+            else:
+                logger.warning("VoiceDataSink 未初始化,无法处理录音")
 
     async def _process_user_audio(self, member):
         """处理用户的录音数据并进行 STT 识别
@@ -387,35 +391,53 @@ class VoiceManager:
         Args:
             member: 用户对象
         """
-        if not self._voice_sink or not self.stt_provider:
+        logger.info(f"开始处理 {member.display_name} 的录音")
+
+        if not self._voice_sink:
+            logger.error("VoiceDataSink 未初始化")
+            return
+        if not self.stt_provider:
+            logger.error("STT 提供商未初始化")
             return
 
         try:
             # 获取用户的音频数据
+            logger.debug("从缓冲区获取音频数据...")
             audio_data = await self._voice_sink.get_audio_data(member.id)
 
             if not audio_data:
-                logger.debug(f"用户 {member.display_name} 没有音频数据")
+                logger.warning(f"用户 {member.display_name} 没有音频数据")
                 return
 
             logger.debug(f"获取到 {len(audio_data)} bytes 音频数据")
 
             # 转换音频格式 (Discord PCM 48kHz -> STT需要的 16kHz)
+            logger.debug("转换音频格式")
             pcm_data = convert_audio_to_pcm(audio_data)
 
             # 进行STT识别
+            logger.info("调用 STT API 识别语音...")
+            logger.debug(f"STT 提供商: {self.stt_provider.__class__.__name__}")
+
             text = await self.stt_provider.recognize(pcm_data)
+
             if text:
-                logger.info(f"识别结果 [{member.display_name}]: {text}")
+                logger.info("识别结果 [{member.display_name}]: {text}")
 
                 # 调用回调函数
                 if self._stt_callback:
+                    logger.info("发送识别结果到 MaiCore")
                     await self._stt_callback(member, text)
+                    logger.debug("已调用 STT 回调函数")
+                else:
+                    logger.warning("STT 回调函数未设置,无法发送到 MaiCore")
             else:
                 logger.debug(f"用户 {member.display_name} 未识别到文本")
 
         except Exception as e:  # pylint: disable=broad-except
             logger.error(f"处理音频数据失败: {e}")
+
+            logger.error(f"错误堆栈:\n{traceback.format_exc()}")
 
     async def connect(self, channel_id: int) -> bool:
         """连接到语音频道
@@ -443,13 +465,15 @@ class VoiceManager:
             # 使用支持录音的 VoiceRecvClient
             if self.stt_provider:
                 self.voice_client = await channel.connect(cls=voice_recv.VoiceRecvClient)
-                logger.info(f"已连接到语音频道(支持录音): {channel.name} ({channel_id})")
+                logger.info(f"已连接到语音频道: {channel.name} ({channel_id})")
+                logger.debug("VoiceClient 类型: VoiceRecvClient (支持 STT)")
 
                 # 启动语音接收
                 await self._start_voice_receiving()
             else:
                 self.voice_client = await channel.connect()
                 logger.info(f"已连接到语音频道: {channel.name} ({channel_id})")
+                logger.debug("VoiceClient 类型: 标准 VoiceClient (支持 TTS)")
 
             return True
 
@@ -462,7 +486,10 @@ class VoiceManager:
         
         使用 discord-ext-voice-recv 监听语音频道中的音频数据。
         """
+        logger.debug("开始启动语音接收...")
+
         if not self.voice_client:
+            logger.error("VoiceClient 未初始化")
             return
 
         if not isinstance(self.voice_client, voice_recv.VoiceRecvClient):
@@ -471,14 +498,18 @@ class VoiceManager:
 
         try:
             # 创建语音数据接收器
+            logger.debug("创建 VoiceDataSink")
             self._voice_sink = VoiceDataSink(self)
 
             # 开始监听
+            logger.debug("调用 listen() 开始接收音频...")
             self.voice_client.listen(self._voice_sink)
-            logger.info("已启动语音接收,可以录制用户语音")
+            logger.info("语音接收已启动,等待用户说话...")
 
         except Exception as e:  # pylint: disable=broad-except
             logger.error(f"启动语音接收失败: {e}")
+
+            logger.error(f"错误堆栈:\n{traceback.format_exc()}")
 
     async def _stop_voice_receiving(self):
         """停止语音接收"""
@@ -489,6 +520,7 @@ class VoiceManager:
             return
 
         try:
+            logger.debug("停止语音接收...")
             self.voice_client.stop_listening()
 
             if self._voice_sink:
@@ -500,12 +532,25 @@ class VoiceManager:
         except Exception as e:  # pylint: disable=broad-except
             logger.error(f"停止语音接收失败: {e}")
 
+            logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
+
     async def disconnect(self):
         """断开语音连接
 
         安全地断开当前的语音频道连接并清理资源。
         """
-        # 先停止语音接收
+        logger.debug("开始断开语音连接...")
+
+        # 先停止正在播放的音频
+        if self.voice_client and self.voice_client.is_playing():
+            try:
+                logger.debug("停止正在播放的音频...")
+                self.voice_client.stop_playing()
+                await asyncio.sleep(0.1)  # 给 FFmpeg 时间清理
+            except Exception as e:  # pylint: disable=broad-except
+                logger.warning(f"停止播放时出现异常: {e}")
+
+        # 停止语音接收
         await self._stop_voice_receiving()
 
         if self.voice_client and self.voice_client.is_connected():
@@ -514,6 +559,8 @@ class VoiceManager:
                 logger.info("已断开语音连接")
             except (discord.DiscordException, RuntimeError, OSError) as e:
                 logger.error(f"断开语音连接失败: {e}")
+            except Exception as e:  # pylint: disable=broad-except
+                logger.error(f"断开连接时发生未预期错误: {e}")
             finally:
                 self.voice_client = None
 
@@ -560,15 +607,24 @@ class VoiceManager:
                 options="-f s16le -ar 48000 -ac 1"
             )
 
-            if self.voice_client.is_playing():
-                self.voice_client.stop()
 
+            if self.voice_client.is_playing():
+                logger.debug("停止当前播放")
+                self.voice_client.stop_playing()
+
+            logger.info("开始播放 TTS 音频")
             self.voice_client.play(audio_source)
-            logger.debug(f"开始播放 TTS: {text[:50]}...")
+            logger.info(f"开始播放: {text[:50]}{'...' if len(text) > 50 else ''}")
+            logger.debug(f"完整文本: {text}")
             return True
 
         except (discord.DiscordException, RuntimeError, OSError) as e:
             logger.error(f"播放 TTS 失败: {e}")
+            return False
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(f"TTS 播放时发生未预期的错误: {e}")
+
+            logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
             return False
 
     def is_connected(self) -> bool:

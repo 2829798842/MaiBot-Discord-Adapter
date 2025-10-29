@@ -6,7 +6,13 @@ import os
 import logging
 import toml
 from .config_base import GlobalConfig, DiscordConfig, ChatConfig, MaiBotServerConfig, DebugConfig
-from .voice_config import VoiceConfig, AzureVoiceConfig, AliyunVoiceConfig, AcgNAIVoiceConfig, SiliconFlowVoiceConfig
+from .voice_config import (
+    VoiceConfig,
+    AzureVoiceConfig,
+    AliyunVoiceConfig,
+    AITTSVoiceConfig,
+    SiliconFlowVoiceConfig
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +97,14 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
                     app_key=aliyun_data.get('app_key', '')
                 )
 
-                # 加载 AcgNAI 配置
-                acgnai_data = voice_config_data.get('acgnai', {})
-                acgnai_cfg = AcgNAIVoiceConfig(
-                    api_base=acgnai_data.get('api_base', 'https://tts.acgnai.top'),
-                    api_key=acgnai_data.get('api_key')
+                # 加载 AI Hobbyist TTS 配置
+                ai_tts_data = voice_config_data.get('ai_tts', {})
+                ai_tts_cfg = AITTSVoiceConfig(
+                    api_base=ai_tts_data.get('api_base', 'https://gsv2p.acgnai.top'),
+                    api_token=ai_tts_data.get('api_token'),
+                    model_name=ai_tts_data.get('model_name', '崩环三-中文-爱莉希雅'),
+                    language=ai_tts_data.get('language', '中文'),
+                    emotion=ai_tts_data.get('emotion', '默认')
                 )
 
                 # 加载 SiliconFlow 配置
@@ -120,7 +129,7 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
                     stt_provider=voice_config_data.get('stt_provider', 'azure'),
                     azure=azure_cfg,
                     aliyun=aliyun_cfg,
-                    acgnai=acgnai_cfg,
+                    ai_tts=ai_tts_cfg,
                     siliconflow=siliconflow_cfg
                 )
             except (KeyError, TypeError, ValueError) as e:
