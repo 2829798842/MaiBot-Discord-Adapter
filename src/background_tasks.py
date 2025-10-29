@@ -167,7 +167,7 @@ class ConnectionMonitorTask:
         except asyncio.TimeoutError:
             logger.warning("连接状态检查超时，可能网络存在问题")
             self.client_manager.is_connected = False
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"检查连接状态时发生异常: {e}")
             self.client_manager.is_connected = False
 
@@ -177,7 +177,7 @@ class ConnectionMonitorTask:
             is_ready = client.is_ready()
             latency = client.latency
             return is_ready, latency
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.debug(f"快速检查时出错: {e}")
             return False, None
 
@@ -207,7 +207,7 @@ class ConnectionMonitorTask:
         except (discord.HTTPException, discord.NotFound) as e:
             logger.warning(f"主动健康检查失败：{e}")
             return False
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.warning(f"主动健康检查异常：{e}")
             return False
 
@@ -306,7 +306,10 @@ class ReactionEventTask:
         current_client_id = id(client)
 
         # 检查是否需要重新注册
-        if self._events_registered and not force_register and self._registered_client_id == current_client_id:
+        if (
+            self._events_registered and not force_register
+            and self._registered_client_id == current_client_id
+            ):
             logger.warning("Reaction事件已在此client上注册，跳过")
             return
 
@@ -343,7 +346,9 @@ class ReactionEventTask:
         """处理表情移除事件"""
         await self._process_reaction_event('reaction_remove', payload)
 
-    async def _process_reaction_event(self, event_type: str, payload: discord.RawReactionActionEvent):
+    async def _process_reaction_event(
+        self, event_type: str, payload: discord.RawReactionActionEvent
+        ):
         """处理reaction事件的通用逻辑（避免代码重复）"""
         try:
             if not self.is_running:
@@ -415,7 +420,7 @@ class ReactionEventTask:
             )
             await self.message_handler.handle_reaction_event(event_type, payload)
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"处理{event_type}事件时发生错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
 

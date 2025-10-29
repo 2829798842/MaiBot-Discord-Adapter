@@ -4,6 +4,7 @@ import random
 from typing import Optional
 from io import BytesIO
 import asyncio
+import traceback
 import aiohttp
 from src.voice.base import TTSProvider
 from src.logger import logger as base_logger
@@ -28,7 +29,7 @@ class AITTSProvider(TTSProvider):
         self.model_name = getattr(config, 'model_name', '崩环三-中文-爱莉希雅')
         self.language = getattr(config, 'language', '中文')
         self.emotion = getattr(config, 'emotion', '默认')
-        
+
         # 请求头
         self.headers = {
             'Content-Type': 'application/json',
@@ -36,7 +37,7 @@ class AITTSProvider(TTSProvider):
         }
         if self.api_token:
             self.headers['Authorization'] = f"Bearer {self.api_token}"
-        
+
         # 可用模型缓存
         self._models_cache = None
 
@@ -55,11 +56,11 @@ class AITTSProvider(TTSProvider):
         """
         if self._models_cache:
             return self._models_cache
-        
+
         try:
             url = f"{self.api_base}/models/v4"
             timeout = aiohttp.ClientTimeout(total=10)
-            
+
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, headers=self.headers) as resp:
                     if resp.status == 200:
@@ -70,7 +71,7 @@ class AITTSProvider(TTSProvider):
                         return models
                     logger.error(f"获取模型列表失败: HTTP {resp.status}")
                     return {}
-        
+
         except Exception as e:  # pylint: disable=broad-except
             logger.error(f"获取模型列表异常: {e}")
             return {}
@@ -86,7 +87,7 @@ class AITTSProvider(TTSProvider):
         """
         if not text:
             return None
-        
+
         if not self.api_token:
             logger.error("AI Hobbyist TTS Token 未配置，无法使用")
             return None
@@ -116,10 +117,10 @@ class AITTSProvider(TTSProvider):
                 'sample_steps': 16,
                 'if_sr': False,
             }
-            
+
             url = f"{self.api_base}/infer_single"
             timeout = aiohttp.ClientTimeout(total=60)
-            
+
             logger.debug(f"请求 TTS: 模型={self.model_name}, 语言={self.language}, 语气={self.emotion}")
             logger.debug(f"文本: {text[:100]}{'...' if len(text) > 100 else ''}")
 
@@ -129,22 +130,24 @@ class AITTSProvider(TTSProvider):
                         text_err = await resp.text()
                         logger.error(f"TTS 请求失败: HTTP {resp.status} - {text_err}")
                         return None
-                    
+
                     data = await resp.json()
-                    
+
                     # 检查响应
                     if data.get('msg') == '参数错误':
-                        logger.error(f"TTS 参数错误: 模型={self.model_name}, 语言={self.language}, 语气={self.emotion}")
+                        logger.error(f"TTS 参数错误: 模型={self.model_name}, "
+                                     f"语言={self.language}, 语气={self.emotion}"
+                                     )
                         return None
-                    
+
                     if data.get('msg') == '合成成功':
                         audio_url = data.get('audio_url')
                         if not audio_url:
                             logger.error("TTS 响应中缺少 audio_url")
                             return None
-                        
+
                         logger.debug(f"TTS 合成成功，下载音频: {audio_url}")
-                        
+
                         # 下载音频文件
                         async with session.get(audio_url) as audio_resp:
                             if audio_resp.status == 200:
@@ -153,7 +156,7 @@ class AITTSProvider(TTSProvider):
                                 return BytesIO(audio_data)
                             logger.error(f"下载音频失败: HTTP {audio_resp.status}")
                             return None
-                    
+
                     logger.error(f"TTS 未知错误: {data}")
                     return None
 
@@ -165,7 +168,8 @@ class AITTSProvider(TTSProvider):
             return None
         except Exception as e:  # pylint: disable=broad-except
             logger.error(f"TTS 异常: {e}")
-            import traceback
+
+
             logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
             return None
 

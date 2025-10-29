@@ -304,7 +304,9 @@ class VoiceManager:
 
             # 寻找有人的频道（优先最近有语音活动的）
             target_channel = await self._find_active_channel()
-            if target_channel and (not current_channel_id or current_channel_id != target_channel.id):
+            if (target_channel and
+            (not current_channel_id or current_channel_id != target_channel.id)
+            ):
                 logger.info(f"切换到活跃频道: {target_channel.name}")
                 await self.connect(target_channel.id)
 

@@ -253,12 +253,16 @@ class DiscordSendHandler:
                 return
 
         # 原有的文本频道处理逻辑
-        target_channel: Optional[discord.abc.Messageable] = await self._thread_manager.resolve_target_channel(message)
+        target_channel: Optional[discord.abc.Messageable] =(
+                        await self._thread_manager.resolve_target_channel(message)
+                        )
         if target_channel is None:
             logger.warning(f"无法解析目标频道，放弃发送：{message_id}")
             return
 
-        content_result: tuple[Optional[str], List[discord.File]] = self._content_builder.build(message.message_segment)
+        content_result: tuple[Optional[str], List[discord.File]] = (
+                                    self._content_builder.build(message.message_segment)
+                                    )
         content: Optional[str]
         files: List[discord.File]
         content, files = content_result
@@ -269,7 +273,9 @@ class DiscordSendHandler:
         logger.debug(f"消息内容预览：{content_preview}")
         logger.debug(f"附件数量：{files_count}")
 
-        reference: Optional[discord.Message] = await self._thread_manager.get_reply_reference(message, target_channel)
+        reference: Optional[discord.Message] = (
+                    await self._thread_manager.get_reply_reference(message, target_channel)
+                    )
 
         if not content and not files:
             logger.warning("消息内容为空且无附件，跳过发送")
@@ -306,7 +312,8 @@ class DiscordSendHandler:
 
                 # 如果超过 10 个文件，只发送前 10 个并警告
                 if len(file_list) > MAX_FILES_PER_MESSAGE:
-                    logger.warning(f"消息包含 {len(file_list)} 个文件，超过 Discord 限制，仅发送前 {MAX_FILES_PER_MESSAGE} 个")
+                    logger.warning(f"消息包含 {len(file_list)} 个文件，超过 Discord 限制,"
+                    f"仅发送前 {MAX_FILES_PER_MESSAGE} 个")
                     file_list = file_list[:MAX_FILES_PER_MESSAGE]
 
                 # 一次性发送所有文件和文本内容
@@ -327,7 +334,9 @@ class DiscordSendHandler:
                 if len(content) <= self.MAX_MESSAGE_LENGTH:
                     await channel.send(content=content, reference=reference if not files else None)
                 else:
-                    await self._send_long_message(channel, content, reference if not files else None)
+                    await (
+                        self._send_long_message(channel, content, reference if not files else None)
+                    )
 
         except (discord.HTTPException, discord.Forbidden) as exc:
             logger.error(f"发送 Discord 消息失败：{exc}")

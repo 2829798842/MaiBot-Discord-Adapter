@@ -70,8 +70,8 @@ class DiscordMessageHandler:
 
                 # 更新发送处理器的上下文映射
                 if self.send_handler:
-                    if (hasattr(message.channel, 'parent') and message.channel.parent is not None and
-                        global_config.chat.inherit_channel_memory):
+                    if ((hasattr(message.channel, 'parent') and message.channel.parent is not None
+                         and global_config.chat.inherit_channel_memory)):
                         # 子区消息：更新上下文映射
                         parent_channel_id = str(message.channel.parent.id)
                         thread_id = str(message.channel.id)
@@ -144,7 +144,8 @@ class DiscordMessageHandler:
 
             if message.guild:
                 # 检查是否为Thread消息
-                is_thread_message = hasattr(message.channel, 'parent') and message.channel.parent is not None
+                is_thread_message = (hasattr(message.channel, 'parent')
+                                    and message.channel.parent is not None)
 
                 if is_thread_message:
                     # Thread消息：根据配置决定是否继承父频道记忆
@@ -435,7 +436,8 @@ class DiscordMessageHandler:
                     if pattern in processed_text:
                         # 优先使用服务器昵称，然后是全局昵称，最后是显示名称
                         server_nick = getattr(user, 'nick', None) if hasattr(user, 'nick') else None
-                        global_name = getattr(user, 'global_name', None) if hasattr(user, 'global_name') else None
+                        global_name = (getattr(user, 'global_name', None)
+                                        if hasattr(user, 'global_name') else None)
                         display_name = server_nick or global_name or user.display_name
 
                         processed_text = processed_text.replace(pattern, f"@{display_name}")
@@ -817,7 +819,10 @@ class DiscordMessageHandler:
 
             # 构造唯一消息ID（使用原始消息ID、用户ID、事件类型和时间戳的组合）
             timestamp = int(time.time() * 1000)  # 毫秒级时间戳确保唯一性
-            unique_message_id = f"reaction_{payload.message_id}_{payload.user_id}_{event_type}_{timestamp}"
+
+
+            unique_message_id = f"reaction_{payload.message_id}_"
+            unique_message_id += f"{payload.user_id}_{event_type}_{timestamp}"
 
             # 构造消息元数据
             message_info = BaseMessageInfo(

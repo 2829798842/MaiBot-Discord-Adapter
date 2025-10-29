@@ -79,7 +79,9 @@ class ThreadRoutingManager:
 
         return self._thread_context_map.get(parent_channel_id)
 
-    async def resolve_target_channel(self, message: MessageBase) -> Optional[discord.abc.Messageable]:
+    async def resolve_target_channel(
+        self, message: MessageBase
+    ) -> Optional[discord.abc.Messageable]:
         """解析消息的发送目标频道。
 
         Args:
@@ -144,7 +146,9 @@ class ThreadRoutingManager:
 
         return None
 
-    async def _resolve_guild_target(self, message: MessageBase) -> Optional[discord.abc.Messageable]:
+    async def _resolve_guild_target(
+        self, message: MessageBase
+        ) -> Optional[discord.abc.Messageable]:
         """解析群组消息应发送的目标。
 
         Args:
@@ -164,10 +168,14 @@ class ThreadRoutingManager:
         reply_in_parent: bool = False
 
         if thread_routing:
-            thread_channel: Optional[discord.abc.Messageable] = self._get_cached_channel(int(thread_routing["original_thread_id"]))
+            thread_channel: Optional[discord.abc.Messageable] = (
+                self._get_cached_channel(int(thread_routing["original_thread_id"]))
+            )
             if not thread_channel:
-                fetched_thread: Optional[discord.abc.Messageable] = discord_client.client.get_channel(
-                    int(thread_routing["original_thread_id"])
+                fetched_thread: Optional[discord.abc.Messageable] = (
+                    discord_client.client.get_channel(
+                        int(thread_routing["original_thread_id"])
+                    )
                 )
                 if fetched_thread:
                     thread_channel = fetched_thread
@@ -184,7 +192,9 @@ class ThreadRoutingManager:
 
         channel: Optional[discord.abc.Messageable] = self._get_cached_channel(target_id)
         if not channel:
-            fetched_channel: Optional[discord.abc.Messageable] = discord_client.client.get_channel(target_id)
+            fetched_channel: Optional[discord.abc.Messageable] = (
+                discord_client.client.get_channel(target_id)
+            )
             if fetched_channel:
                 channel = fetched_channel
                 self._channel_cache[target_id] = fetched_channel
@@ -210,7 +220,9 @@ class ThreadRoutingManager:
             if global_config.chat.inherit_channel_memory and not reply_in_parent:
                 active_thread_id: Optional[str] = self.get_active_thread(str(target_id))
                 if active_thread_id:
-                    mapped_channel: Optional[discord.abc.Messageable] = self._get_cached_channel(int(active_thread_id))
+                    mapped_channel: Optional[discord.abc.Messageable] = (
+                        self._get_cached_channel(int(active_thread_id))
+                    )
                     if not mapped_channel:
                         mapped_channel = discord_client.client.get_channel(int(active_thread_id))
                     if isinstance(mapped_channel, discord.Thread):
@@ -237,7 +249,9 @@ class ThreadRoutingManager:
             logger.error(f"用户 ID 无效：{user_id}")
             return None
 
-        user: Optional[discord.User] = self._user_cache.get(int_user_id) or discord_client.client.get_user(int_user_id)
+        user: Optional[discord.User] = (
+            self._user_cache.get(int_user_id) or discord_client.client.get_user(int_user_id)
+        )
         if not user:
             try:
                 user = await discord_client.client.fetch_user(int_user_id)
@@ -307,7 +321,9 @@ class ThreadRoutingManager:
         """
 
         try:
-            parent_channel: Optional[discord.abc.GuildChannel] = discord_client.client.get_channel(parent_channel_id)
+            parent_channel: Optional[discord.abc.GuildChannel] = (
+                discord_client.client.get_channel(parent_channel_id)
+            )
             if not isinstance(parent_channel, discord.TextChannel):
                 return False
             await parent_channel.fetch_message(int(reply_id))
@@ -317,7 +333,9 @@ class ThreadRoutingManager:
         except (discord.HTTPException, ValueError):
             return False
 
-    async def _find_thread_by_message_id(self, message_id: str, parent_channel_id: int) -> Optional[discord.Thread]:
+    async def _find_thread_by_message_id(
+        self, message_id: str, parent_channel_id: int
+        ) -> Optional[discord.Thread]:
         """根据回复消息定位所在子区。
 
         Args:
@@ -333,7 +351,9 @@ class ThreadRoutingManager:
         except (TypeError, ValueError):
             return None
 
-        parent_channel: Optional[discord.abc.GuildChannel] = discord_client.client.get_channel(parent_channel_id)
+        parent_channel: Optional[discord.abc.GuildChannel] = (
+            discord_client.client.get_channel(parent_channel_id)
+        )
         if not isinstance(parent_channel, discord.TextChannel):
             return None
 
@@ -348,7 +368,9 @@ class ThreadRoutingManager:
                 continue
 
         try:
-            archived_threads: List[discord.Thread] = [thread async for thread in parent_channel.archived_threads(limit=50)]
+            archived_threads: List[discord.Thread] = [
+                thread async for thread in parent_channel.archived_threads(limit=50)
+            ]
         except discord.HTTPException:
             archived_threads = []
 
