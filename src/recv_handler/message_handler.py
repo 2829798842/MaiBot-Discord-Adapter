@@ -90,7 +90,7 @@ class DiscordMessageHandler:
         except (AttributeError, ValueError, TypeError) as e:
             logger.error(f"处理 Discord 消息时发生错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"处理 Discord 消息时发生未知错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
 
@@ -624,7 +624,7 @@ class DiscordMessageHandler:
             else:
                 logger.error("MaiBot 路由器未设置，无法转发 reaction 事件")
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"处理 {event_type} 事件时发生错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
 
@@ -841,7 +841,7 @@ class DiscordMessageHandler:
                 raw_message=description
             )
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"转换 reaction 事件时发生错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
             return None

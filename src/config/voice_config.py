@@ -38,15 +38,21 @@ class AliyunVoiceConfig:
 
 
 @dataclass
-class AcgNAIVoiceConfig:
-    """第三方 AcgNAI TTS 配置
+class AITTSVoiceConfig:
+    """AI Hobbyist TTS 配置 (GPT-SoVITS v4)
     
     Attributes:
         api_base: API 基础地址
-        api_key: API 密钥（可选）
+        api_token: API 访问令牌（从 https://gsv.acgnai.top 获取）
+        model_name: 默认语音模型
+        language: 默认语言
+        emotion: 默认语气
     """
-    api_base: str = "https://tts.acgnai.top"
-    api_key: Optional[str] = None
+    api_base: str = "https://gsv2p.acgnai.top"
+    api_token: Optional[str] = None
+    model_name: str = "崩环三-中文-爱莉希雅"
+    language: str = "中文"
+    emotion: str = "默认"
 
 
 @dataclass
@@ -81,11 +87,11 @@ class VoiceConfig:
         enabled: 是否启用语音功能
         voice_channel_whitelist: 语音频道白名单
         check_interval: 频道切换检查间隔（秒），仅多频道时生效
-        tts_provider: TTS 提供商（azure/acgnai/siliconflow）
+        tts_provider: TTS 提供商（azure/ai_tts/siliconflow）
         stt_provider: STT 提供商（azure/aliyun/siliconflow）
         azure: Azure 配置
         aliyun: 阿里云配置
-        acgnai: AcgNAI 配置
+        ai_tts: AI Hobbyist TTS 配置
         siliconflow: SiliconFlow 配置
     """
     enabled: bool = False
@@ -95,7 +101,7 @@ class VoiceConfig:
     stt_provider: str = "azure"
     azure: AzureVoiceConfig = None
     aliyun: AliyunVoiceConfig = None
-    acgnai: AcgNAIVoiceConfig = None
+    ai_tts: AITTSVoiceConfig = None
     siliconflow: SiliconFlowVoiceConfig = None
 
     def __post_init__(self):
@@ -105,7 +111,7 @@ class VoiceConfig:
             self.azure = AzureVoiceConfig()
         if self.aliyun is None:
             self.aliyun = AliyunVoiceConfig()
-        if self.acgnai is None:
-            self.acgnai = AcgNAIVoiceConfig()
+        if self.ai_tts is None:
+            self.ai_tts = AITTSVoiceConfig()
         if self.siliconflow is None:
             self.siliconflow = SiliconFlowVoiceConfig()
