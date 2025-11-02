@@ -3,12 +3,23 @@
 """
 
 import asyncio
+import time
 import traceback
 from importlib import import_module
 
 import discord
+from maim_message import (
+    BaseMessageInfo,
+    FormatInfo,
+    GroupInfo,
+    MessageBase,
+    Seg,
+    UserInfo,
+)
+
 from ..logger import logger
 from ..config import global_config, is_user_allowed
+from ..mmc_com_layer import router
 
 class DiscordClientManager:
     """Discord 客户端管理器
@@ -180,6 +191,9 @@ class DiscordClientManager:
                 stt_provider=stt_provider
             )
 
+            if stt_provider:
+                self.voice_manager.set_stt_callback(self._handle_stt_result)
+
             # 启动语音管理器
             await self.voice_manager.start()
             logger.info("语音功能已启动")
@@ -188,6 +202,75 @@ class DiscordClientManager:
             logger.warning(f"导入语音模块失败，跳过语音功能: {e}")
         except Exception as e:  # pylint: disable=broad-except
             logger.error(f"初始化语音功能失败: {e}")
+
+    async def _handle_stt_result(self, member: discord.Member, text: str) -> None:
+        """将语音识别结果转发到 MaiBot Core"""
+        timestamp = time.time()
+
+        # 构造用户信息
+        user_info = UserInfo(
+            platform=global_config.maibot_server.platform_name,
+            user_id=str(member.id),
+            user_nickname=member.display_name,
+            user_cardname=getattr(member, "nick", None),
+        )
+
+        # 尝试定位所属频道
+        voice_state = getattr(member, "voice", None)
+        channel = getattr(voice_state, "channel", None)
+        if channel is None and self.voice_manager and self.voice_manager.voice_client:
+            channel = getattr(self.voice_manager.voice_client, "channel", None)
+
+        group_info = None
+        if channel and getattr(channel, "guild", None):
+            guild_name = channel.guild.name
+            group_info = GroupInfo(
+                platform=global_config.maibot_server.platform_name,
+                group_id=str(channel.id),
+                group_name=f"{channel.name} (Voice) @ {guild_name}",
+            )
+
+        format_info = FormatInfo(
+            content_format=["text"],
+            accept_format=["text", "image", "emoji", "reply", "voice", "command", "file", "video"],
+        )
+
+        message_info = BaseMessageInfo(
+            platform=global_config.maibot_server.platform_name,
+            message_id=f"voice-{member.id}-{int(timestamp * 1000)}",
+            time=timestamp,
+            user_info=user_info,
+            group_info=group_info,
+            format_info=format_info,
+        )
+
+        message = MessageBase(
+            message_info=message_info,
+            message_segment=Seg(type="text", data=text),
+            raw_message=text,
+        )
+
+        try:
+            # 如果识别来自语音频道，则优先在对应语音频道播放 TTS
+            played = False
+            if channel and getattr(channel, "guild", None) and self.voice_manager:
+                try:
+
+                    if self.voice_manager.tts_provider:
+                        logger.debug(f"尝试在语音频道播放 TTS: channel_id={channel.id}")
+                        played = await self.voice_manager.speak(text, channel_id=channel.id)
+                        if played:
+                            logger.info(f"已在语音频道播放识别结果: user={member.id}, channel={channel.id}")
+                except Exception as play_exc:  # pylint: disable=broad-except
+                    logger.error(f"在语音频道播放 TTS 时出错: {play_exc}")
+
+            # 如果没有播放（非语音来源或播放失败），则转发到 MaiCore（文本路径）
+            if not played:
+                await router.send_message(message)
+                logger.info(f"已转发语音识别结果到 MaiCore: user={member.id},"
+                            f" channel={getattr(channel, 'id', None)}")
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error(f"发送语音识别结果到 MaiCore 失败: {exc}")
 
     async def _on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState

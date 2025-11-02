@@ -424,7 +424,7 @@ class VoiceManager:
             text = await self.stt_provider.recognize(pcm_data)
 
             if text:
-                logger.info("识别结果 [{member.display_name}]: {text}")
+                logger.info(f"识别结果 [{member.display_name}]: {text}")
 
                 # 调用回调函数
                 if self._stt_callback:

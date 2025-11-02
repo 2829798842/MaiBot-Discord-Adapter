@@ -6,13 +6,21 @@ description = "A MaiBot adapter for Discord"
 license = {text = "MIT"}
 readme = "README.md"
 dependencies = [
-    "discord.py>=2.3.0",
+    "discord.py[voice]>=2.3.0",
+    "discord-ext-voice-recv>=0.4.0",
     "maim_message",
     "loguru>=0.7.0",
     "pyyaml>=6.0",
     "aiofiles",
     "tomlkit",
     "asyncio",
+    "azure-cognitiveservices-speech>=1.38.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+    "pytest>=7.0.0",
 ]
 
 [tool.ruff]
