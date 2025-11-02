@@ -247,9 +247,31 @@ class DiscordSendHandler:
         group_info = getattr(message_info, "group_info", None)
         if group_info:
             group_id = getattr(group_info, "group_id", "")
+            voice_group_id: Optional[str] = None
+
             if group_id.startswith("voice_"):
-                # 语音频道消息，转为 TTS 播报
-                await self._handle_voice_channel_message(message, group_id)
+                voice_group_id = group_id
+            else:
+                try:
+                    channel_id_candidate = int(group_id)
+                except (TypeError, ValueError):
+                    channel_id_candidate = None
+
+                if channel_id_candidate is not None:
+                    client = discord_client.client
+                    discord_channel = client.get_channel(channel_id_candidate) if client else None
+
+                    if discord_channel is None and client:
+                        try:
+                            discord_channel = await client.fetch_channel(channel_id_candidate)
+                        except (discord.HTTPException, discord.Forbidden, discord.NotFound):
+                            discord_channel = None
+
+                    if isinstance(discord_channel, discord.VoiceChannel):
+                        voice_group_id = f"voice_{channel_id_candidate}"
+
+            if voice_group_id:
+                await self._handle_voice_channel_message(message, voice_group_id)
                 return
 
         # 原有的文本频道处理逻辑

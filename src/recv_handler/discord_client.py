@@ -251,24 +251,12 @@ class DiscordClientManager:
         )
 
         try:
-            # 如果识别来自语音频道，则优先在对应语音频道播放 TTS
-            played = False
-            if channel and getattr(channel, "guild", None) and self.voice_manager:
-                try:
-
-                    if self.voice_manager.tts_provider:
-                        logger.debug(f"尝试在语音频道播放 TTS: channel_id={channel.id}")
-                        played = await self.voice_manager.speak(text, channel_id=channel.id)
-                        if played:
-                            logger.info(f"已在语音频道播放识别结果: user={member.id}, channel={channel.id}")
-                except Exception as play_exc:  # pylint: disable=broad-except
-                    logger.error(f"在语音频道播放 TTS 时出错: {play_exc}")
-
-            # 如果没有播放（非语音来源或播放失败），则转发到 MaiCore（文本路径）
-            if not played:
-                await router.send_message(message)
-                logger.info(f"已转发语音识别结果到 MaiCore: user={member.id},"
-                            f" channel={getattr(channel, 'id', None)}")
+            await router.send_message(message)
+            logger.info(
+                "已转发语音识别结果到 MaiCore: user=%s, channel=%s",
+                member.id,
+                getattr(channel, "id", None),
+            )
         except Exception as exc:  # pylint: disable=broad-except
             logger.error(f"发送语音识别结果到 MaiCore 失败: {exc}")
 
