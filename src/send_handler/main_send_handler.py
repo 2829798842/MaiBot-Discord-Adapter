@@ -247,6 +247,7 @@ class DiscordSendHandler:
         group_info = getattr(message_info, "group_info", None)
         if group_info:
             group_id = getattr(group_info, "group_id", "")
+            logger.debug(f"检测群组消息是否需要语音播报: group_id={group_id}")
             voice_group_id: Optional[str] = None
 
             if group_id.startswith("voice_"):
@@ -259,11 +260,14 @@ class DiscordSendHandler:
 
                 if channel_id_candidate is not None:
                     if await self._resolve_voice_channel(channel_id_candidate):
+                        logger.debug(f"识别到语音频道 ID: {channel_id_candidate}")
                         voice_group_id = f"voice_{channel_id_candidate}"
 
             if voice_group_id:
                 await self._handle_voice_channel_message(message, voice_group_id)
                 return
+            else:
+                logger.debug("当前群组不匹配语音频道，继续按普通文本流程发送")
 
         # 原有的文本频道处理逻辑
         target_channel: Optional[discord.abc.Messageable] =(
