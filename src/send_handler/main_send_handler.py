@@ -532,8 +532,12 @@ class DiscordSendHandler:
         try:
             # 检查语音管理器是否可用
             if not self.voice_manager:
-                logger.warning("语音管理器未初始化，无法播报消息")
-                return
+                if discord_client.voice_manager:
+                    self.voice_manager = discord_client.voice_manager
+                    logger.debug("从 Discord 客户端同步语音管理器实例")
+                else:
+                    logger.warning("语音管理器未初始化，无法播报消息")
+                    return
 
             # 提取频道 ID
             try:
