@@ -258,16 +258,7 @@ class DiscordSendHandler:
                     channel_id_candidate = None
 
                 if channel_id_candidate is not None:
-                    client = discord_client.client
-                    discord_channel = client.get_channel(channel_id_candidate) if client else None
-
-                    if discord_channel is None and client:
-                        try:
-                            discord_channel = await client.fetch_channel(channel_id_candidate)
-                        except (discord.HTTPException, discord.Forbidden, discord.NotFound):
-                            discord_channel = None
-
-                    if isinstance(discord_channel, discord.VoiceChannel):
+                    if await self._resolve_voice_channel(channel_id_candidate):
                         voice_group_id = f"voice_{channel_id_candidate}"
 
             if voice_group_id:
@@ -554,6 +545,14 @@ class DiscordSendHandler:
 
             logger.debug(f"准备播报消息到语音频道 {channel_id}: {text[:50]}...")
 
+            # 同步发送文本到语音频道附带的文字聊天
+            voice_channel = await self._resolve_voice_channel(channel_id)
+            if voice_channel:
+                await self._send_with_length_check(voice_channel, text, (), None)
+                logger.debug(f"已同步发送文本消息到语音频道 {channel_id}")
+            else:
+                logger.warning(f"无法找到语音频道 {channel_id} 的文字聊天入口")
+
             # 调用语音管理器播报
             success = await self.voice_manager.speak(text, channel_id)
             if success:
@@ -586,6 +585,22 @@ class DiscordSendHandler:
         except Exception as e:  # pylint: disable=broad-except
             logger.debug(f"提取消息文本失败: {e}")
             return ""
+
+    async def _resolve_voice_channel(self, channel_id: int) -> Optional[discord.VoiceChannel]:
+        """获取语音频道实例，失败时返回 None"""
+
+        client = discord_client.client
+        if not client:
+            return None
+
+        channel = client.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await client.fetch_channel(channel_id)
+            except (discord.HTTPException, discord.Forbidden, discord.NotFound):
+                return None
+
+        return channel if isinstance(channel, discord.VoiceChannel) else None
 
 
 send_handler = DiscordSendHandler()
