@@ -1,3 +1,5 @@
+"""AI Hobbyist TTS 实现.
+"""
 from __future__ import annotations
 
 import asyncio

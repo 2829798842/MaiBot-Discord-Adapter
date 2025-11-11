@@ -607,7 +607,7 @@ class VoiceManager:
                 audio_stream,
                 pipe=True,
                 before_options="-f s16le -ar 48000 -ac 1",
-                options="-f s16le -ar 48000 -ac 2"
+                options="-ac 2"
             )
 
 
