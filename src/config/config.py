@@ -10,8 +10,8 @@ from .voice_config import (
     VoiceConfig,
     AzureVoiceConfig,
     AliyunVoiceConfig,
-    AITTSVoiceConfig,
-    SiliconFlowVoiceConfig
+    AIHobbyistVoiceConfig,
+    SiliconFlowVoiceConfig,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,13 +98,16 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
                 )
 
                 # 加载 AI Hobbyist TTS 配置
-                ai_tts_data = voice_config_data.get('ai_tts', {})
-                ai_tts_cfg = AITTSVoiceConfig(
-                    api_base=ai_tts_data.get('api_base', 'https://gsv2p.acgnai.top'),
-                    api_token=ai_tts_data.get('api_token'),
-                    model_name=ai_tts_data.get('model_name', '崩环三-中文-爱莉希雅'),
-                    language=ai_tts_data.get('language', '中文'),
-                    emotion=ai_tts_data.get('emotion', '默认')
+                ai_hobbyist_data = voice_config_data.get('ai_hobbyist')
+                if ai_hobbyist_data is None:
+                    ai_hobbyist_data = voice_config_data.get('ai_tts', {})  # 兼容旧字段
+
+                ai_hobbyist_cfg = AIHobbyistVoiceConfig(
+                    api_base=ai_hobbyist_data.get('api_base', 'https://gsv2p.acgnai.top'),
+                    api_token=ai_hobbyist_data.get('api_token'),
+                    model_name=ai_hobbyist_data.get('model_name', '崩环三-中文-爱莉希雅'),
+                    language=ai_hobbyist_data.get('language', '中文'),
+                    emotion=ai_hobbyist_data.get('emotion', '默认')
                 )
 
                 # 加载 SiliconFlow 配置
@@ -121,15 +124,20 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
                 )
 
                 # 创建 VoiceConfig
+                raw_tts_provider = voice_config_data.get('tts_provider', 'azure')
+                if raw_tts_provider == 'ai_tts':
+                    logger.debug("检测到旧版 TTS 提供商命名 'ai_tts'，自动映射为 'ai_hobbyist'")
+                    raw_tts_provider = 'ai_hobbyist'
+
                 config.voice = VoiceConfig(
                     enabled=voice_config_data.get('enabled', False),
                     voice_channel_whitelist=voice_config_data.get('voice_channel_whitelist', []),
                     check_interval=voice_config_data.get('check_interval', 10),
-                    tts_provider=voice_config_data.get('tts_provider', 'azure'),
+                    tts_provider=raw_tts_provider,
                     stt_provider=voice_config_data.get('stt_provider', 'azure'),
                     azure=azure_cfg,
                     aliyun=aliyun_cfg,
-                    ai_tts=ai_tts_cfg,
+                    ai_hobbyist=ai_hobbyist_cfg,
                     siliconflow=siliconflow_cfg
                 )
             except (KeyError, TypeError, ValueError) as e:
