@@ -312,9 +312,13 @@ class DiscordClientManager:
             logger.debug(f"  消息类型: {type(message.channel).__name__}")
 
             # 忽略机器人自己发送的消息
-            if message.author == self.client.user:
+            bot_user = getattr(self.client, "user", None)
+            if bot_user and message.author.id == bot_user.id:
                 logger.debug("忽略机器人自己发送的消息")
                 return
+
+            if message.author.bot:
+                logger.debug("暂不影响，等待后续更新")
 
             # 检查黑白名单
             guild_id = message.guild.id if message.guild else None
