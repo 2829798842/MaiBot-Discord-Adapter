@@ -32,6 +32,57 @@ class DiscordMessageHandler:
         self.router = None
         self.send_handler = None  # 将在 main.py 中设置
 
+    def _build_user_info(
+        self,
+        user: discord.abc.User,
+        member: Optional[discord.Member] = None,
+    ) -> tuple[UserInfo, bool]:
+        """构造 MaiBot 标准的用户信息结构。
+
+        Args:
+            user: Discord 用户/成员对象。
+            member: 如果已经有 Guild Member，则传入以便获取群昵称。
+
+        Returns:
+            tuple[UserInfo, bool]: (构造好的用户信息, 是否为机器人自身)。
+        """
+
+        # 优先使用 display_name -> global_name -> name
+        display_name = (
+            getattr(user, "display_name", None)
+            or getattr(user, "global_name", None)
+            or user.name
+        )
+
+        # 服务器昵称优先从 member 获取，退回 user.nick
+        server_nickname = (
+            getattr(member, "nick", None)
+            if member is not None
+            else getattr(user, "nick", None)
+        )
+
+        # 默认使用 Discord 平台信息
+        user_platform = global_config.maibot_server.platform_name
+        user_id = str(getattr(user, "id", ""))
+        bot_client = getattr(discord_client, "client", None)
+        bot_user = getattr(bot_client, "user", None) if bot_client else None
+        is_bot_self = bool(bot_user and getattr(user, "id", None) == getattr(bot_user, "id", None))
+
+        if is_bot_self and bot_user:
+            bot_name = getattr(bot_user, "name", None) or display_name or user.name
+            display_name = f"{bot_name}(你)"
+            if server_nickname:
+                server_nickname = f"{server_nickname}(你)"
+
+        user_info = UserInfo(
+            platform=user_platform,
+            user_id=user_id,
+            user_nickname=display_name,
+            user_cardname=server_nickname,
+        )
+
+        return user_info, is_bot_self
+
     async def handle_discord_message(self, message: discord.Message):
         """处理 Discord 消息
         
@@ -106,34 +157,31 @@ class DiscordMessageHandler:
         try:
             logger.debug("开始构造 MaiBot 消息对象")
 
-            # 构造用户信息
-            # 获取各种用户名称信息
-            username = message.author.name  # Discord用户名
-            display_name = message.author.display_name  # 显示名称（全局昵称或用户名）
-            # 服务器昵称
-            server_nickname = (getattr(message.author, 'nick', None)
-                             if hasattr(message.author, 'nick') else None)
-            # 全局显示名称
-            global_name = (getattr(message.author, 'global_name', None)
-                         if hasattr(message.author, 'global_name') else None)
-
-            user_info = UserInfo(
-                platform=global_config.maibot_server.platform_name,
-                user_id=str(message.author.id),
-                user_nickname=display_name,  # 主要显示名称
-                user_cardname=server_nickname  # 服务器内的昵称
+            username = message.author.name
+            display_name_raw = getattr(message.author, 'display_name', None)
+            global_name = getattr(message.author, 'global_name', None) if hasattr(message.author, 'global_name') else None
+            server_nickname_raw = (
+                getattr(message.author, 'nick', None)
+                if hasattr(message.author, 'nick')
+                else None
             )
 
-            # 详细记录用户信息
+            member = message.author if isinstance(message.author, discord.Member) else None
+            user_info, is_bot_self = self._build_user_info(message.author, member)
+
             logger.debug("用户信息详情:")
             logger.debug(f"  用户ID: {user_info.user_id}")
             logger.debug(f"  Discord用户名: {username}")
-            logger.debug(f"  显示名称: {display_name}")
+            logger.debug(f"  显示名称: {display_name_raw}")
             if global_name:
                 logger.debug(f"  全局昵称: {global_name}")
-            if server_nickname:
-                logger.debug(f"  服务器昵称: {server_nickname}")
-            logger.debug(f"  是否为机器人: {message.author.bot}")
+            if server_nickname_raw:
+                logger.debug(f"  服务器昵称: {server_nickname_raw}")
+            if user_info.user_nickname != (display_name_raw or username):
+                logger.debug(f"  转换后昵称: {user_info.user_nickname}")
+            if user_info.user_cardname and user_info.user_cardname != server_nickname_raw:
+                logger.debug(f"  转换后服务器昵称: {user_info.user_cardname}")
+            logger.debug(f"  是否为机器人: {message.author.bot} (is_bot_self={is_bot_self})")
 
             # 构造群组信息（如果是服务器消息）
             group_info = None
@@ -679,18 +727,11 @@ class DiscordMessageHandler:
                 logger.error(f"无法获取用户 {payload.user_id} 的信息")
                 return None
 
-            # 构造用户信息
-            user_display_name = getattr(user, "display_name", None) or user.name
-            server_nickname = getattr(member, "nick", None) if member else None
-
-            user_info = UserInfo(
-                platform=global_config.maibot_server.platform_name,
-                user_id=str(user.id),
-                user_nickname=user_display_name,
-                user_cardname=server_nickname
+            user_info, is_bot_self = self._build_user_info(user, member)
+            logger.debug(
+                f"Reaction用户信息: {user_info.user_nickname} (ID: {user_info.user_id}) "
+                f"is_bot_self={is_bot_self}"
             )
-
-            logger.debug(f"Reaction用户信息: {user_display_name} (ID: {user.id})")
 
             # 构造群组信息
             group_info = None
@@ -776,9 +817,7 @@ class DiscordMessageHandler:
 
             # 构造消息内容
             action_text = "添加了" if event_type == 'reaction_add' else "移除了"
-
-
-            description = format_reaction_for_ai(emoji_str, emoji_name, 1, user_display_name)
+            description = format_reaction_for_ai(emoji_str, emoji_name, 1, user_info.user_nickname)
             # 调整描述文本以匹配实际操作
             description = description.replace("添加了", action_text)
 
@@ -794,8 +833,9 @@ class DiscordMessageHandler:
             reaction_metadata = {
                 "event_type": event_type,
                 "action": "add" if event_type == 'reaction_add' else "remove",
-                "user_id": str(payload.user_id),
-                "user_name": user_display_name,
+                "user_id": user_info.user_id,
+                "origin_user_id": str(payload.user_id),
+                "user_name": user_info.user_nickname,
                 "message_id": str(payload.message_id),
                 "channel_id": str(payload.channel_id),
                 "guild_id": str(payload.guild_id) if payload.guild_id else None,
