@@ -43,7 +43,6 @@ emotion = "默认"
 | `language`  | 提示文本语言，内部会作为 `prompt_text_lang` 与 `text_lang` 使用。|
 | `emotion`   | 语气参数，具体可用值随模型而定，通常包括“默认”“开心”等。      |
 
-> 若仍保留旧配置段 `[voice.ai_tts]` 或 `tts_provider = "ai_tts"`，程序会自动向新命名迁移，但建议尽快更新。
 
 ## 请求负载与默认参数
 
