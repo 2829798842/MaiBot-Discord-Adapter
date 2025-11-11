@@ -137,8 +137,8 @@ class DiscordClientManager:
                 azure_stt_module = import_module("src.voice.stt.azure_stt")
                 azure_stt_cls = azure_stt_module.AzureSTTProvider
 
-                ai_tts_module = import_module("src.voice.tts.ai_tts")
-                ai_tts_cls = ai_tts_module.AITTSProvider
+                ai_hobbyist_tts_module = import_module("src.voice.tts.ai_hobbyist_tts")
+                ai_hobbyist_tts_cls = ai_hobbyist_tts_module.AITTSProvider
 
                 aliyun_stt_module = import_module("src.voice.stt.aliyun_stt")
                 aliyun_stt_cls = aliyun_stt_module.AliyunSTTProvider
@@ -159,9 +159,11 @@ class DiscordClientManager:
                 if voice_config.tts_provider == "azure":
                     tts_provider = azure_tts_cls(config=voice_config.azure)
                     logger.debug(f"TTS 提供商已初始化: Azure ({voice_config.azure.tts_voice})")
-                elif voice_config.tts_provider == "ai_tts":
-                    tts_provider = ai_tts_cls(config=voice_config.ai_tts)
-                    logger.debug(f"TTS 提供商已初始化: AI Hobbyist TTS ({voice_config.ai_tts.model_name})")
+                elif voice_config.tts_provider in {"ai_hobbyist", "ai_tts"}:
+                    tts_provider = ai_hobbyist_tts_cls(config=voice_config.ai_hobbyist)
+                    logger.debug(
+                        f"TTS 提供商已初始化: AI Hobbyist TTS ({voice_config.ai_hobbyist.model_name})"
+                    )
                 elif voice_config.tts_provider == "siliconflow":
                     tts_provider = siliconflow_tts_cls(config=voice_config.siliconflow)
                     logger.debug(f"TTS 提供商已初始化: SiliconFlow ({voice_config.siliconflow.tts_model})")

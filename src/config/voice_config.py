@@ -38,7 +38,7 @@ class AliyunVoiceConfig:
 
 
 @dataclass
-class AITTSVoiceConfig:
+class AIHobbyistVoiceConfig:
     """AI Hobbyist TTS 配置 (GPT-SoVITS v4)
     
     Attributes:
@@ -53,6 +53,11 @@ class AITTSVoiceConfig:
     model_name: str = "崩环三-中文-爱莉希雅"
     language: str = "中文"
     emotion: str = "默认"
+
+
+
+# 向后兼容旧类名
+AITTSVoiceConfig = AIHobbyistVoiceConfig
 
 
 @dataclass
@@ -87,11 +92,11 @@ class VoiceConfig:
         enabled: 是否启用语音功能
         voice_channel_whitelist: 语音频道白名单
         check_interval: 频道切换检查间隔（秒），仅多频道时生效
-        tts_provider: TTS 提供商（azure/ai_tts/siliconflow）
+        tts_provider: TTS 提供商（azure/ai_hobbyist/siliconflow）
         stt_provider: STT 提供商（azure/aliyun/siliconflow）
         azure: Azure 配置
         aliyun: 阿里云配置
-        ai_tts: AI Hobbyist TTS 配置
+        ai_hobbyist: AI Hobbyist TTS 配置
         siliconflow: SiliconFlow 配置
     """
     enabled: bool = False
@@ -101,7 +106,7 @@ class VoiceConfig:
     stt_provider: str = "azure"
     azure: AzureVoiceConfig = None
     aliyun: AliyunVoiceConfig = None
-    ai_tts: AITTSVoiceConfig = None
+    ai_hobbyist: AIHobbyistVoiceConfig = None
     siliconflow: SiliconFlowVoiceConfig = None
 
     def __post_init__(self):
@@ -111,7 +116,15 @@ class VoiceConfig:
             self.azure = AzureVoiceConfig()
         if self.aliyun is None:
             self.aliyun = AliyunVoiceConfig()
-        if self.ai_tts is None:
-            self.ai_tts = AITTSVoiceConfig()
+        if self.ai_hobbyist is None:
+            self.ai_hobbyist = AIHobbyistVoiceConfig()
         if self.siliconflow is None:
             self.siliconflow = SiliconFlowVoiceConfig()
+
+    @property
+    def ai_tts(self) -> AIHobbyistVoiceConfig:  # 向后兼容旧配置名称
+        return self.ai_hobbyist
+
+    @ai_tts.setter
+    def ai_tts(self, value: AIHobbyistVoiceConfig) -> None:
+        self.ai_hobbyist = value

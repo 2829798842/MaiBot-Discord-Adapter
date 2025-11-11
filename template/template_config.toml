@@ -74,7 +74,7 @@ voice_channel_whitelist = []  # 语音频道白名单（右键点击语音频道
                                # 单个频道：Bot 固定在该频道
                                # 多个频道：Bot 自动跟随有人的频道
 check_interval = 30       # 频道切换检查间隔（秒），仅在白名单有多个频道时生效
-tts_provider = "azure"    # TTS 提供商（可选：azure, ai_tts, siliconflow）
+tts_provider = "azure"    # TTS 提供商（可选：azure, ai_hobbyist, siliconflow）
 stt_provider = "azure"    # STT 提供商（可选：azure, aliyun, siliconflow）
 
 
@@ -93,13 +93,14 @@ access_key_secret = ""
 app_key = ""
 
 # AI Hobbyist TTS 配置（GPT-SoVITS v4）
-[voice.ai_tts]
-api_base = "https://gsv2p.acgnai.top"  # API v4 基础地址
-api_token = ""  # API 访问令牌（从 https://gsv.acgnai.top 右上角用户名处获取）
-model_name = "崩环三-中文-爱莉希雅"  # 默认语音模型
-                                     # 支持《崩坏3》《原神》《星穹铁道》《鸣潮》等角色
-language = "中文"  # 默认语言
-emotion = "默认"   # 默认语气
+[voice.ai_hobbyist]
+# 官方站点：https://tts.acgnai.top/
+# API 说明：GET /models/v4 可获取模型列表，POST /infer_single 进行语音合成。
+api_base = "https://gsv2p.acgnai.top"  # 推理服务基础地址，默认保持不变
+api_token = ""  # 访问令牌（登录官网后在右上角用户菜单中获取）
+model_name = "崩环三-中文-爱莉希雅"  # 默认语音模型，可用列表见 /models/v4
+language = "中文"  # 提示文本语言（prompt_text_lang & text_lang），与模型语言匹配
+emotion = "默认"   # 语气参数，具体可用值取决于所选模型
 
 # SiliconFlow 语音服务配置
 [voice.siliconflow]
