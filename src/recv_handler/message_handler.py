@@ -117,28 +117,10 @@ class DiscordMessageHandler:
             global_name = (getattr(message.author, 'global_name', None)
                          if hasattr(message.author, 'global_name') else None)
 
-            # 检查是否为 bot 自身（使用全局 discord_client 来获取当前登录账号）
-            try:
-                bot_client = getattr(discord_client, 'client', None)
-                bot_user = getattr(bot_client, 'user', None) if bot_client else None
-            except Exception:  # pylint: disable=broad-except
-                bot_user = None
-
-            is_bot_self = False
-            if bot_user and message.author.id == bot_user.id:
-                is_bot_self = True
-
-            # 如果是 bot 自身，使用真实用户名并在显示名后加上 " (你)"
-            if is_bot_self and bot_user:
-                real_name = getattr(bot_user, 'name', display_name)
-                display_name_to_use = f"{real_name} (你)"
-            else:
-                display_name_to_use = display_name
-
             user_info = UserInfo(
                 platform=global_config.maibot_server.platform_name,
                 user_id=str(message.author.id),
-                user_nickname=display_name_to_use,  # 主要显示名称
+                user_nickname=display_name,  # 主要显示名称
                 user_cardname=server_nickname  # 服务器内的昵称
             )
 
