@@ -39,19 +39,10 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
         # 加载 Discord 配置
         discord_config = config_data.get('discord', {})
 
-        raw_bot_id = discord_config.get('bot_id')
-        bot_id_value = None
-        if raw_bot_id is not None and raw_bot_id != "":
-            try:
-                bot_id_value = int(raw_bot_id)
-            except (TypeError, ValueError):
-                logger.warning("无法解析 discord.bot_id=%s，将忽略该配置",raw_bot_id)
-
         config.discord = DiscordConfig(
             token=discord_config.get('token', ''),
             intents=discord_config.get('intents', {}),
-            retry=discord_config.get('retry', {}),
-            bot_id=bot_id_value
+            retry=discord_config.get('retry', {})
         )
 
         # 加载聊天控制配置

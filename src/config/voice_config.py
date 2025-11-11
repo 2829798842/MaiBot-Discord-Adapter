@@ -120,4 +120,3 @@ class VoiceConfig:
             self.ai_hobbyist = AIHobbyistVoiceConfig()
         if self.siliconflow is None:
             self.siliconflow = SiliconFlowVoiceConfig()
-
