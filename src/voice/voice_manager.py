@@ -606,7 +606,8 @@ class VoiceManager:
             audio_source = discord.FFmpegPCMAudio(
                 audio_stream,
                 pipe=True,
-                before_options="-f s16le -ar 48000 -ac 1"
+                before_options="-f s16le -ar 48000 -ac 1",
+                options="-loglevel error"
             )
 
 
