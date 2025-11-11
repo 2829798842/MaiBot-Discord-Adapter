@@ -43,6 +43,8 @@ class DiscordClientManager:
         self.is_reconnecting = False
         self._reconnect_task = None
         self.voice_manager = None  # 语音管理器（将在启动时初始化）
+        self._configured_bot_id = global_config.discord.bot_id
+        self._has_logged_bot_id_mismatch = False
         self._setup_client()
 
     def _setup_client(self):
@@ -105,6 +107,19 @@ class DiscordClientManager:
         logger.info(f"Discord 客户端已连接: {self.client.user}")
         logger.info(f"Bot 已加入 {len(self.client.guilds)} 个服务器")
 
+        if (
+            self._configured_bot_id is not None
+            and self.client.user is not None
+            and self.client.user.id != self._configured_bot_id
+            and not self._has_logged_bot_id_mismatch
+        ):
+            logger.warning(
+                "配置文件中的 bot_id=%s 与当前登录账号 ID=%s 不一致，请确认配置是否正确",
+                self._configured_bot_id,
+                self.client.user.id,
+            )
+            self._has_logged_bot_id_mismatch = True
+
         # 显示加入的服务器信息
         for guild in self.client.guilds:
             logger.debug(f"服务器: {guild.name} (ID: {guild.id})")
@@ -159,7 +174,7 @@ class DiscordClientManager:
                 if voice_config.tts_provider == "azure":
                     tts_provider = azure_tts_cls(config=voice_config.azure)
                     logger.debug(f"TTS 提供商已初始化: Azure ({voice_config.azure.tts_voice})")
-                elif voice_config.tts_provider in {"ai_hobbyist", "ai_tts"}:
+                elif voice_config.tts_provider == "ai_hobbyist":
                     tts_provider = ai_hobbyist_tts_cls(config=voice_config.ai_hobbyist)
                     logger.debug(
                         f"TTS 提供商已初始化: AI Hobbyist TTS ({voice_config.ai_hobbyist.model_name})"
@@ -313,6 +328,12 @@ class DiscordClientManager:
 
             # 忽略机器人自己发送的消息
             bot_user = getattr(self.client, "user", None)
+            configured_bot_id = self._configured_bot_id
+
+            if configured_bot_id is not None and message.author.id == configured_bot_id:
+                logger.debug("忽略配置中指定的机器人自身消息")
+                return
+
             if bot_user and message.author.id == bot_user.id:
                 logger.debug("忽略机器人自己发送的消息")
                 return

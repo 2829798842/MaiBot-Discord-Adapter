@@ -56,11 +56,13 @@ class DiscordConfig:
         token (str): Discord Bot Token
         intents (Dict[str, bool]): Discord 权限意图配置
         retry (Dict[str, Any]): 重试配置
+        bot_id (Optional[int]): 当前 Bot 的用户 ID
     """
 
     token: str = ""
     intents: Dict[str, bool] = None
     retry: Dict[str, Any] = None
+    bot_id: Optional[int] = None
 
     def __post_init__(self):
         if self.intents is None:

@@ -38,10 +38,20 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
 
         # 加载 Discord 配置
         discord_config = config_data.get('discord', {})
+
+        raw_bot_id = discord_config.get('bot_id')
+        bot_id_value = None
+        if raw_bot_id is not None and raw_bot_id != "":
+            try:
+                bot_id_value = int(raw_bot_id)
+            except (TypeError, ValueError):
+                logger.warning("无法解析 discord.bot_id=%s，将忽略该配置",raw_bot_id)
+
         config.discord = DiscordConfig(
             token=discord_config.get('token', ''),
             intents=discord_config.get('intents', {}),
-            retry=discord_config.get('retry', {})
+            retry=discord_config.get('retry', {}),
+            bot_id=bot_id_value
         )
 
         # 加载聊天控制配置
@@ -98,9 +108,7 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
                 )
 
                 # 加载 AI Hobbyist TTS 配置
-                ai_hobbyist_data = voice_config_data.get('ai_hobbyist')
-                if ai_hobbyist_data is None:
-                    ai_hobbyist_data = voice_config_data.get('ai_tts', {})  # 兼容旧字段
+                ai_hobbyist_data = voice_config_data.get('ai_hobbyist', {})
 
                 ai_hobbyist_cfg = AIHobbyistVoiceConfig(
                     api_base=ai_hobbyist_data.get('api_base', 'https://gsv2p.acgnai.top'),
@@ -125,9 +133,6 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
 
                 # 创建 VoiceConfig
                 raw_tts_provider = voice_config_data.get('tts_provider', 'azure')
-                if raw_tts_provider == 'ai_tts':
-                    logger.debug("检测到旧版 TTS 提供商命名 'ai_tts'，自动映射为 'ai_hobbyist'")
-                    raw_tts_provider = 'ai_hobbyist'
 
                 config.voice = VoiceConfig(
                     enabled=voice_config_data.get('enabled', False),

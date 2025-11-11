@@ -121,10 +121,3 @@ class VoiceConfig:
         if self.siliconflow is None:
             self.siliconflow = SiliconFlowVoiceConfig()
 
-    @property
-    def ai_tts(self) -> AIHobbyistVoiceConfig:  # 向后兼容旧配置名称
-        return self.ai_hobbyist
-
-    @ai_tts.setter
-    def ai_tts(self, value: AIHobbyistVoiceConfig) -> None:
-        self.ai_hobbyist = value
