@@ -5,9 +5,6 @@ version = "0.1.2" # 版本号
 [discord] # Discord Bot 设置
 token = "your_discord_bot_token_"
 
-bot_id = "" # 用于过滤bot自身所发消息
-            # 大多时候可以留空，此处是为了验证语音频道中子文本频道消息来源解析失败
-
 [chat]
 # 获取服务器 ID：右键点击服务器名称 -> 复制服务器 ID
 # 获取频道 ID：右键点击频道名称 -> 复制频道 ID
