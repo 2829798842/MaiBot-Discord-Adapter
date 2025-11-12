@@ -76,6 +76,7 @@ class AITTSProvider(TTSProvider):
             self.headers["Authorization"] = f"Bearer {self.api_token}"
 
         self._models_cache: Optional[dict] = None
+        self._params_validated: bool = False
 
         logger.info("AI Hobbyist TTS 初始化完成")
         logger.debug("  └─ API Base: %s", self.api_base)
@@ -128,6 +129,8 @@ class AITTSProvider(TTSProvider):
         if not self.api_token:
             logger.error("AI Hobbyist TTS Token 未配置，无法使用")
             return None
+
+        await self._ensure_valid_params()
 
         payload: Dict[str, Any] = copy.deepcopy(self.BASE_PAYLOAD_TEMPLATE)
         payload.update(
@@ -201,3 +204,76 @@ class AITTSProvider(TTSProvider):
     async def close(self) -> None:
         """关闭资源。"""
         logger.info("AI Hobbyist TTS 提供商已关闭")
+
+    async def _ensure_valid_params(self) -> None:
+        """校验并在必要时纠正配置的模型/语言/语气组合。"""
+
+        if self._params_validated:
+            return
+
+        models = await self.get_models()
+        if not models:
+            logger.warning("无法获取 AI Hobbyist 模型列表，将直接使用配置的参数，可能导致合成失败")
+            self._params_validated = True
+            return
+
+        updated = False
+
+        if self.model_name not in models:
+            previous_model = self.model_name
+            self.model_name, languages_map = next(iter(models.items()))
+            self.config.model_name = self.model_name
+            updated = True
+            logger.warning(
+                "配置的 AI Hobbyist 模型 '%s' 不存在，改用 '%s'",
+                previous_model,
+                self.model_name,
+            )
+        else:
+            languages_map = models.get(self.model_name, {})
+
+        if not languages_map:
+            logger.warning("模型 '%s' 没有提供可用语言，保留当前语言 '%s' 并继续", self.model_name, self.language)
+        else:
+            if self.language not in languages_map:
+                previous_language = self.language
+                self.language = next(iter(languages_map.keys()))
+                self.config.language = self.language
+                updated = True
+                logger.warning(
+                    "模型 '%s' 不支持语言 '%s'，改用 '%s'",
+                    self.model_name,
+                    previous_language,
+                    self.language,
+                )
+
+            emotions = languages_map.get(self.language, [])
+            if not emotions:
+                logger.warning(
+                    "模型 '%s' 在语言 '%s' 下没有语气列表，保留当前语气 '%s'",
+                    self.model_name,
+                    self.language,
+                    self.emotion,
+                )
+            elif self.emotion not in emotions:
+                previous_emotion = self.emotion
+                self.emotion = emotions[0]
+                self.config.emotion = self.emotion
+                updated = True
+                logger.warning(
+                    "模型 '%s' / 语言 '%s' 不支持语气 '%s'，改用 '%s'",
+                    self.model_name,
+                    self.language,
+                    previous_emotion,
+                    self.emotion,
+                )
+
+        if updated:
+            logger.info(
+                "AI Hobbyist TTS 参数已自动调整: 模型=%s, 语言=%s, 语气=%s",
+                self.model_name,
+                self.language,
+                self.emotion,
+            )
+
+        self._params_validated = True
