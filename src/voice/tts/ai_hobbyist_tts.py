@@ -84,58 +84,6 @@ class AITTSProvider(TTSProvider):
         logger.debug("  └─ 默认语言: %s", self.language)
         logger.debug("  └─ 默认语气: %s", self.emotion)
 
-    async def _ensure_valid_params(self) -> bool:
-        """确保模型参数有效,如果无法获取模型列表则使用配置的参数。
-
-        Returns:
-            bool: 参数有效返回 True
-        """
-        try:
-            models = await self.get_models()
-
-            if not models:
-                logger.warning("无法获取 AI Hobbyist 模型列表, 将直接使用配置的参数, 可能导致合成失败")
-                return True  # 无法验证,但继续使用配置的参数
-
-            # 检查模型是否存在
-            if self.model_name not in models:
-                logger.warning(
-                    "配置的模型 '%s' 不在可用列表中, 将直接使用, 可能导致合成失败",
-                    self.model_name
-                )
-                return True
-
-            model_langs = models[self.model_name]
-
-            # 检查语言是否存在
-            if self.language not in model_langs:
-                logger.warning(
-                    "模型 '%s' 不支持语言 '%s', 将直接使用, 可能导致合成失败",
-                    self.model_name,
-                    self.language
-                )
-                return True
-
-            # 检查语气是否存在
-            emotions = model_langs[self.language]
-            if self.emotion not in emotions:
-                logger.warning(
-                    "模型 '%s' 的语言 '%s' 不支持语气 '%s', 将直接使用, 可能导致合成失败",
-                    self.model_name,
-                    self.language,
-                    self.emotion
-                )
-                return True
-
-            logger.debug("参数验证通过: 模型=%s, 语言=%s, 语气=%s", 
-                        self.model_name, self.language, self.emotion)
-            return True
-
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.error("参数验证异常: %s", exc)
-            logger.debug("错误堆栈:\n%s", traceback.format_exc())
-            return True  # 即使验证失败也继续,让API返回错误
-
     async def get_models(self) -> dict:
         """获取所有可用的语音模型。
 
@@ -149,25 +97,20 @@ class AITTSProvider(TTSProvider):
             url: str = f"{self.api_base}{self.MODELS_ENDPOINT.format(version=self.VERSION)}"
             timeout = aiohttp.ClientTimeout(total=self.MODELS_TIMEOUT_SECONDS)
 
-            # 请求体需要包含 version 字段
-            payload = {"version": self.VERSION}
-
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, json=payload, headers=self.headers) as resp:
+                async with session.post(url, headers=self.headers) as resp:
                     if resp.status == 200:
                         data: Dict[str, Any] = await resp.json()
                         models: Dict[str, Any] = data.get("models", {})
                         self._models_cache = models
-                        logger.info("成功获取 %d 个可用模型", len(models))
+                        logger.debug("获取到 %d 个可用模型", len(models))
                         return models
 
-                    error_text = await resp.text()
-                    logger.error("获取模型列表失败: HTTP %s - %s", resp.status, error_text)
+                    logger.error("获取模型列表失败: HTTP %s", resp.status)
                     return {}
 
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("获取模型列表异常: %s", exc)
-            logger.debug("错误堆栈:\n%s", traceback.format_exc())
             return {}
 
     async def synthesize(self, text: str) -> Optional[BytesIO]:
@@ -185,9 +128,6 @@ class AITTSProvider(TTSProvider):
         if not self.api_token:
             logger.error("AI Hobbyist TTS Token 未配置，无法使用")
             return None
-
-        # 验证参数
-        await self._ensure_valid_params()
 
         payload: Dict[str, Any] = copy.deepcopy(self.BASE_PAYLOAD_TEMPLATE)
         payload.update(
