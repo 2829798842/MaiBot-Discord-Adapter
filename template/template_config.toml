@@ -115,7 +115,7 @@ tts_voice = "fnlp/MOSS-TTSD-v0.5:alex"  # TTS 语音音色
                                          # 可选音色: alex, anna, bella, benjamin, charles, claire, david, diana
 stt_model = "FunAudioLLM/SenseVoiceSmall"  # STT 模型名称
 response_format = "pcm"  # 音频输出格式：mp3, opus, wav, pcm
-sample_rate = 48000      # 采样率（Hz）
+sample_rate = 44100      # 采样率（Hz）
 speed = 1.0              # 语速（0.25-4.0）
 
 
