@@ -55,11 +55,6 @@ class AIHobbyistVoiceConfig:
     emotion: str = "默认"
 
 
-
-# 向后兼容旧类名
-AITTSVoiceConfig = AIHobbyistVoiceConfig
-
-
 @dataclass
 class SiliconFlowVoiceConfig:
     """SiliconFlow 语音服务配置
