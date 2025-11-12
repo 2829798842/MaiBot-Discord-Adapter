@@ -8,14 +8,11 @@ import traceback
 from src.logger import logger
 from src.recv_handler.discord_client import discord_client
 from src.recv_handler.message_handler import message_handler
-from src.send_handler import send_handler
+from src.send_handler.main_send_handler import send_handler
 from src.mmc_com_layer import mmc_start_com, mmc_stop_com, router
 from src.utils import async_task_manager
 from src.config import global_config
 from src.background_tasks import background_task_manager
-
-# 消息队列
-message_queue = asyncio.Queue()
 
 # 全局关闭事件
 shutdown_event = asyncio.Event()
@@ -24,60 +21,27 @@ shutdown_event = asyncio.Event()
 async def message_process():
     """消息处理协程
     
-    从队列中获取 Discord 消息并转发到 MaiBot Core
+    直接从Discord客户端的队列中获取并处理消息
     """
     logger.info("消息处理器已启动")
     while not shutdown_event.is_set():
         try:
-            # 使用超时避免无限等待
-            message = await asyncio.wait_for(message_queue.get(), timeout=1.0)
-            logger.debug(f"消息处理器: 开始处理消息 {message.id}")
+            message = await asyncio.wait_for(discord_client.message_queue.get(), timeout=1.0)
+            logger.debug(f"开始处理消息 {message.id}")
+
             # 处理 Discord 消息
             await message_handler.handle_discord_message(message)
-            message_queue.task_done()
-            logger.debug(f"消息处理器: 消息 {message.id} 处理完成")
+            discord_client.message_queue.task_done()
+
+            logger.debug(f"消息 {message.id} 处理完成")
         except asyncio.TimeoutError:
-            # 超时正常，继续检查关闭事件
             continue
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"处理消息时发生错误: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
             await asyncio.sleep(0.1)
 
     logger.info("消息处理器已停止")
-
-
-async def discord_message_collector():
-    """Discord 消息收集器
-    
-    从 Discord 客户端收集消息并放入队列
-    """
-    logger.info("消息收集器已启动，正在等待 Discord 消息...")
-    message_check_count = 0
-    while not shutdown_event.is_set():
-        try:
-            if not discord_client.message_queue.empty():
-                message = await asyncio.wait_for(discord_client.message_queue.get(), timeout=0.1)
-                await message_queue.put(message)
-                discord_client.message_queue.task_done()
-                logger.debug(f"消息收集器: 已将消息 {message.id} 从 Discord 队列转移到主队列")
-            else:
-                message_check_count += 1
-                if message_check_count % 1000 == 0:  # 每 10 秒打印一次状态
-                    if hasattr(discord_client, 'is_connected') and discord_client.is_connected:
-                        logger.debug("消息收集器: 正在等待消息... ")
-                    else:
-                        logger.debug("消息收集器: Discord未连接，正在等待重连...")
-                await asyncio.sleep(0.01)
-        except asyncio.TimeoutError:
-            # 超时正常，继续循环
-            continue
-        except Exception as e:
-            logger.error(f"收集 Discord 消息时发生错误: {e}")
-            logger.error(f"错误详情: {traceback.format_exc()}")
-            await asyncio.sleep(0.1)
-
-    logger.info("消息收集器已停止")
 
 
 async def graceful_shutdown():
@@ -92,7 +56,7 @@ async def graceful_shutdown():
         try:
             background_task_manager.stop_all_tasks()
             logger.info("后台任务已停止")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"停止后台任务时出错: {e}")
 
         # 关闭 Discord 客户端
@@ -101,7 +65,7 @@ async def graceful_shutdown():
             logger.info("Discord 客户端已关闭")
         except asyncio.TimeoutError:
             logger.warning("Discord 客户端关闭超时")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"关闭 Discord 客户端时出错: {e}")
 
         # 关闭 MaiBot 通信
@@ -112,13 +76,13 @@ async def graceful_shutdown():
             logger.warning("MaiBot 通信关闭超时")
         except asyncio.CancelledError:
             logger.debug("MaiBot 通信任务已被取消")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"关闭 MaiBot 通信时出错: {e}")
 
         # 取消管理器中的任务
         try:
             await async_task_manager.cancel_all()
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"取消任务管理器时出错: {e}")
 
         # 取消剩余任务
@@ -138,12 +102,12 @@ async def graceful_shutdown():
                 )
             except asyncio.TimeoutError:
                 logger.warning("部分任务取消超时")
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 logger.debug(f"任务取消时出现异常: {e}")
 
         logger.info("Discord 适配器已成功关闭")
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error(f"关闭适配器时出现错误: {e}")
 
 
@@ -167,6 +131,9 @@ async def run_adapter():
         # 设置消息处理器的路由器
         message_handler.router = router
 
+        # 设置消息处理器和发送处理器的相互引用（用于子区上下文映射）
+        message_handler.send_handler = send_handler
+
         # 注册 MaiBot 消息处理器
         router.register_class_handler(send_handler.handle_message)
 
@@ -180,26 +147,17 @@ async def run_adapter():
             mmc_task = asyncio.create_task(mmc_start_com())
             tasks.append(mmc_task)
             logger.info("MaiBot 通信任务已创建")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"创建 MaiBot 通信任务失败: {e}")
             return
 
         # 启动消息处理器
         try:
-            message_task = asyncio.create_task(message_process())
-            tasks.append(message_task)
+            processor_task = asyncio.create_task(message_process())
+            tasks.append(processor_task)
             logger.info("消息处理任务已创建")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"创建消息处理任务失败: {e}")
-            return
-
-        # 启动消息收集器
-        try:
-            collector_task = asyncio.create_task(discord_message_collector())
-            tasks.append(collector_task)
-            logger.info("消息收集任务已创建")
-        except Exception as e:
-            logger.error(f"创建消息收集任务失败: {e}")
             return
 
         # 启动 Discord 客户端
@@ -213,12 +171,18 @@ async def run_adapter():
             # 等待一小段时间让Discord客户端开始连接
             await asyncio.sleep(2)
 
+            # 将 voice_manager 传递给 send_handler
+            if discord_client.voice_manager:
+                send_handler.voice_manager = discord_client.voice_manager
+                logger.info("语音管理器已连接到发送处理器")
+
             # 然后初始化后台任务管理器并启动监控
             background_task_manager.register_connection_monitor(discord_client)
+            background_task_manager.register_reaction_event_task(discord_client, message_handler)
             background_task_manager.start_all_tasks()
             logger.info("后台任务管理器已初始化并启动")
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"创建 Discord 客户端任务失败: {e}")
             # Discord 失败但仍然可以继续运行其他组件
 
@@ -244,7 +208,7 @@ async def run_adapter():
                     if not task.cancelled():
                         task.result()  # 获取结果以检查异常
                         logger.warning(f"任务意外结束: {task}")
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-except
                     if task == discord_task and "Cannot connect to host discord.com" in str(e):
                         logger.error("Discord 连接失败，可能是网络问题或 Token 无效")
                     else:
@@ -259,7 +223,7 @@ async def run_adapter():
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error(f"运行适配器时发生错误: {e}")
     finally:
         # 确保优雅关闭
@@ -273,7 +237,7 @@ if __name__ == "__main__":
             global_config.discord.token == "your_discord_bot_token_"):
             logger.error("请在 config.toml 文件中设置有效的 Discord Bot Token")
             sys.exit(1)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error(f"配置检查失败: {e}")
         sys.exit(1)
 
@@ -287,7 +251,7 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
         logger.info("接收到键盘中断")
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.exception(f"主程序异常: {str(e)}")
         sys.exit(1)
     finally:

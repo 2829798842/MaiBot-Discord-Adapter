@@ -4,6 +4,7 @@
 
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
+from .voice_config import VoiceConfig
 
 
 @dataclass
@@ -21,6 +22,7 @@ class ChatConfig:
         user_list (List[int]): 用户名单
         allow_thread_interaction (bool): 是否允许子区交互
         inherit_channel_permissions (bool): 子区是否继承父频道权限
+        inherit_channel_memory (bool): 子区是否继承父频道记忆
     """
 
     guild_list_type: str = "whitelist"
@@ -33,6 +35,7 @@ class ChatConfig:
     user_list: List[int] = None
     allow_thread_interaction: bool = True
     inherit_channel_permissions: bool = True
+    inherit_channel_memory: bool = True
 
     def __post_init__(self):
         if self.guild_list is None:
@@ -52,7 +55,7 @@ class DiscordConfig:
     Attributes:
         token (str): Discord Bot Token
         intents (Dict[str, bool]): Discord 权限意图配置
-        retry (Dict[str, Any]): 重试配置
+    retry (Dict[str, Any]): 重试配置
     """
 
     token: str = ""
@@ -105,12 +108,14 @@ class GlobalConfig:
         chat (ChatConfig): 聊天控制配置
         maibot_server (MaiBotServerConfig): MaiBot 服务器配置
         debug (DebugConfig): 调试配置
+        voice (VoiceConfig): 语音功能配置
     """
 
     discord: DiscordConfig = None
     chat: ChatConfig = None
     maibot_server: MaiBotServerConfig = None
     debug: DebugConfig = None
+    voice: VoiceConfig = None
 
     def __post_init__(self):
         if self.discord is None:
@@ -121,3 +126,5 @@ class GlobalConfig:
             self.maibot_server = MaiBotServerConfig()
         if self.debug is None:
             self.debug = DebugConfig()
+        if self.voice is None:
+            self.voice = VoiceConfig()

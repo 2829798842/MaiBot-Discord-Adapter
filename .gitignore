@@ -44,6 +44,9 @@ config.toml
 *.yaml.bak
 *.yml.bak
 
+# 包管理器
+uv.lock
+
 # 日志文件
 logs/
 *.log
