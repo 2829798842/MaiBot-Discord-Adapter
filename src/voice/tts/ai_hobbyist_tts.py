@@ -78,11 +78,11 @@ class AITTSProvider(TTSProvider):
         self._models_cache: Optional[dict] = None
 
         logger.info("AI Hobbyist TTS 初始化完成")
-        logger.debug("  └─ API Base: %s", self.api_base)
-        logger.debug("  └─ Token: %s", "已配置" if self.api_token else "未配置")
-        logger.debug("  └─ 默认模型: %s", self.model_name)
-        logger.debug("  └─ 默认语言: %s", self.language)
-        logger.debug("  └─ 默认语气: %s", self.emotion)
+        logger.debug(f"  └─ API Base: {self.api_base}")
+        logger.debug(f"  └─ Token: {'已配置' if self.api_token else '未配置'}")
+        logger.debug(f"  └─ 默认模型: {self.model_name}")
+        logger.debug(f"  └─ 默认语言: {self.language}")
+        logger.debug(f"  └─ 默认语气: {self.emotion}")
 
     async def get_models(self) -> dict:
         """获取所有可用的语音模型。
@@ -97,21 +97,74 @@ class AITTSProvider(TTSProvider):
             url: str = f"{self.api_base}{self.MODELS_ENDPOINT.format(version=self.VERSION)}"
             timeout = aiohttp.ClientTimeout(total=self.MODELS_TIMEOUT_SECONDS)
 
+            # 使用 GET 请求获取模型列表 (根据API文档)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, headers=self.headers) as resp:
+                async with session.get(url, headers=self.headers) as resp:
                     if resp.status == 200:
                         data: Dict[str, Any] = await resp.json()
                         models: Dict[str, Any] = data.get("models", {})
                         self._models_cache = models
-                        logger.debug("获取到 %d 个可用模型", len(models))
+                        logger.info(f"成功获取 {len(models)} 个可用模型")
                         return models
 
-                    logger.error("获取模型列表失败: HTTP %s", resp.status)
+                    error_text = await resp.text()
+                    logger.error(f"获取模型列表失败: HTTP {resp.status} - {error_text}")
                     return {}
 
         except Exception as exc:  # pylint: disable=broad-except
-            logger.error("获取模型列表异常: %s", exc)
+            logger.error(f"获取模型列表异常: {exc}")
+            logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
             return {}
+
+    async def _ensure_valid_params(self) -> bool:
+        """确保模型参数有效,如果无法获取模型列表则使用配置的参数。
+
+        Returns:
+            bool: 参数有效返回 True
+        """
+        try:
+            models = await self.get_models()
+
+            if not models:
+                logger.warning("无法获取 AI Hobbyist 模型列表, 将直接使用配置的参数, 可能导致合成失败")
+                return True  # 无法验证,但继续使用配置的参数
+
+            # 检查模型是否存在
+            if self.model_name not in models:
+                available_models = list(models.keys())[:5]  # 显示前5个可用模型
+                logger.warning(
+                    f"配置的模型 '{self.model_name}' 不在可用列表中, 将直接使用, 可能导致合成失败. "
+                    f"可用模型示例: {available_models}"
+                )
+                return True
+
+            model_langs = models[self.model_name]
+
+            # 检查语言是否存在
+            if self.language not in model_langs:
+                available_langs = list(model_langs.keys())
+                logger.warning(
+                    f"模型 '{self.model_name}' 不支持语言 '{self.language}', 将直接使用, 可能导致合成失败. "
+                    f"可用语言: {available_langs}"
+                )
+                return True
+
+            # 检查语气是否存在
+            emotions = model_langs[self.language]
+            if self.emotion not in emotions:
+                logger.warning(
+                    f"模型 '{self.model_name}' 的语言 '{self.language}' 不支持语气 '{self.emotion}', "
+                    f"将直接使用, 可能导致合成失败. 可用语气: {emotions}"
+                )
+                return True
+
+            logger.debug(f"参数验证通过: 模型={self.model_name}, 语言={self.language}, 语气={self.emotion}")
+            return True
+
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error(f"参数验证异常: {exc}")
+            logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
+            return True  # 即使验证失败也继续,让API返回错误
 
     async def synthesize(self, text: str) -> Optional[BytesIO]:
         """合成语音。
@@ -128,6 +181,9 @@ class AITTSProvider(TTSProvider):
         if not self.api_token:
             logger.error("AI Hobbyist TTS Token 未配置，无法使用")
             return None
+
+        # 验证参数有效性
+        await self._ensure_valid_params()
 
         payload: Dict[str, Any] = copy.deepcopy(self.BASE_PAYLOAD_TEMPLATE)
         payload.update(
@@ -173,29 +229,29 @@ class AITTSProvider(TTSProvider):
                             logger.error("TTS 响应中缺少 audio_url")
                             return None
 
-                        logger.debug("TTS 合成成功，下载音频: %s", audio_url)
+                        logger.debug(f"TTS 合成成功，下载音频: {audio_url}")
 
                         async with session.get(audio_url) as audio_resp:
                             if audio_resp.status == 200:
                                 audio_data: bytes = await audio_resp.read()
-                                logger.info("TTS 合成成功: %d bytes", len(audio_data))
+                                logger.info(f"TTS 合成成功: {len(audio_data)} bytes")
                                 return BytesIO(audio_data)
 
-                            logger.error("下载音频失败: HTTP %s", audio_resp.status)
+                            logger.error(f"下载音频失败: HTTP {audio_resp.status}")
                             return None
 
-                    logger.error("TTS 未知错误: %s", data)
+                    logger.error(f"TTS 未知错误: {data}")
                     return None
 
         except asyncio.TimeoutError:
             logger.error("TTS 请求超时")
             return None
         except aiohttp.ClientError as exc:
-            logger.error("TTS 网络错误: %s", exc)
+            logger.error(f"TTS 网络错误: {exc}")
             return None
         except Exception as exc:  # pylint: disable=broad-except
-            logger.error("TTS 异常: %s", exc)
-            logger.debug("错误堆栈:\n%s", traceback.format_exc())
+            logger.error(f"TTS 异常: {exc}")
+            logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
             return None
 
     async def close(self) -> None:
