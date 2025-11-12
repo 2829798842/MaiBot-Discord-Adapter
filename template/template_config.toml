@@ -102,7 +102,7 @@ app_key = ""
 # API 说明：GET /models/v4 可获取模型列表，POST /infer_single 进行语音合成。
 api_base = "https://gsv2p.acgnai.top"  # 推理服务基础地址，默认保持不变
 api_token = ""  # 访问令牌（登录官网后在右上角用户菜单中获取）
-model_name = "崩环三-中文-爱莉希雅"  # 默认语音模型，可用列表见 /models/v4
+model_name = "原神_中文_芙宁娜_ZH"  # 默认语音模型，可用列表见 /models/v4
 language = "中文"  # 提示文本语言（prompt_text_lang & text_lang），与模型语言匹配
 emotion = "默认"   # 语气参数，具体可用值取决于所选模型
 
@@ -115,7 +115,7 @@ tts_voice = "fnlp/MOSS-TTSD-v0.5:alex"  # TTS 语音音色
                                          # 可选音色: alex, anna, bella, benjamin, charles, claire, david, diana
 stt_model = "FunAudioLLM/SenseVoiceSmall"  # STT 模型名称
 response_format = "pcm"  # 音频输出格式：mp3, opus, wav, pcm
-sample_rate = 48000      # 采样率（Hz）
+sample_rate = 44100      # 采样率（Hz）
 speed = 1.0              # 语速（0.25-4.0）
 
 
