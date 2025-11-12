@@ -67,7 +67,7 @@ class AITTSProvider(TTSProvider):
         self.config: AIHobbyistVoiceConfig = config
         self.api_base: str = getattr(config, "api_base", "https://gsv2p.acgnai.top").rstrip("/")
         self.api_token: Optional[str] = getattr(config, "api_token", None)
-        self.model_name: str = getattr(config, "model_name", "崩环三-中文-爱莉希雅")
+        self.model_name: str = getattr(config, "model_name", "崩坏三-中文-爱莉希雅_ZH")
         self.language: str = getattr(config, "language", "中文")
         self.emotion: str = getattr(config, "emotion", "默认")
 
@@ -131,7 +131,7 @@ class AITTSProvider(TTSProvider):
 
             # 检查模型是否存在
             if self.model_name not in models:
-                available_models = list(models.keys())[:5]  # 显示前5个可用模型
+                available_models = list(models.keys())[:10]  # 显示前10个可用模型
                 logger.warning(
                     f"配置的模型 '{self.model_name}' 不在可用列表中, 将直接使用, 可能导致合成失败. "
                     f"可用模型示例: {available_models}"
@@ -200,9 +200,9 @@ class AITTSProvider(TTSProvider):
         url: str = f"{self.api_base}{self.INFER_ENDPOINT}"
         timeout = aiohttp.ClientTimeout(total=self.INFER_TIMEOUT_SECONDS)
 
-        logger.debug("请求 TTS: 模型=%s, 语言=%s, 语气=%s", self.model_name, self.language, self.emotion)
+        logger.debug(f"请求 TTS: 模型={self.model_name}, 语言={self.language}, 语气={self.emotion}")
         preview_text: str = text[:100] + ("..." if len(text) > 100 else "")
-        logger.debug("文本: %s", preview_text)
+        logger.debug(f"文本: {preview_text}")
 
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -216,10 +216,7 @@ class AITTSProvider(TTSProvider):
 
                     if data.get("msg") == "参数错误":
                         logger.error(
-                            "TTS 参数错误: 模型=%s, 语言=%s, 语气=%s",
-                            self.model_name,
-                            self.language,
-                            self.emotion,
+                            f"TTS 参数错误: 模型={self.model_name}, 语言={self.language}, 语气={self.emotion}"
                         )
                         return None
 

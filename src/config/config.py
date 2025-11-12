@@ -104,7 +104,7 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
                 ai_hobbyist_cfg = AIHobbyistVoiceConfig(
                     api_base=ai_hobbyist_data.get('api_base', 'https://gsv2p.acgnai.top'),
                     api_token=ai_hobbyist_data.get('api_token'),
-                    model_name=ai_hobbyist_data.get('model_name', '崩环三-中文-爱莉希雅'),
+                    model_name=ai_hobbyist_data.get('model_name', '崩坏三-中文-爱莉希雅_ZH'),
                     language=ai_hobbyist_data.get('language', '中文'),
                     emotion=ai_hobbyist_data.get('emotion', '默认')
                 )

@@ -50,7 +50,7 @@ class AIHobbyistVoiceConfig:
     """
     api_base: str = "https://gsv2p.acgnai.top"
     api_token: Optional[str] = None
-    model_name: str = "崩环三-中文-爱莉希雅"
+    model_name: str = "崩坏三-中文-爱莉希雅_ZH"
     language: str = "中文"
     emotion: str = "默认"
 
