@@ -105,7 +105,7 @@ api_token = ""  # 访问令牌（登录官网后在右上角用户菜单中获�
 model_name = "原神_中文_芙宁娜_ZH"  # 默认语音模型，可用列表见 /models/v4
 language = "中文"  # 提示文本语言（prompt_text_lang & text_lang），与模型语言匹配
 emotion = "默认"   # 语气参数，具体可用值取决于所选模型
-
+                   # 其他参数请到 ./src/voice/tts/ai_hobbyist_tts.py 进行具体更改
 # SiliconFlow 语音服务配置
 [voice.siliconflow]
 api_key = ""  # SiliconFlow API 密钥（从 https://cloud.siliconflow.cn/account/ak 获取）
