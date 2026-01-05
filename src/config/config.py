@@ -4,7 +4,7 @@
 
 import os
 import logging
-import toml
+import tomlkit
 from .config_base import GlobalConfig, DiscordConfig, ChatConfig, MaiBotServerConfig, DebugConfig
 from .voice_config import (
     VoiceConfig,
@@ -33,108 +33,107 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
         return config
 
     try:
-        with open(config_path, 'r', encoding='utf-8') as file:
-            config_data = toml.load(file)
+        with open(config_path, "r", encoding="utf-8") as file:
+            config_data = tomlkit.load(file)
 
         # 加载 Discord 配置
-        discord_config = config_data.get('discord', {})
+        discord_config = config_data.get("discord", {})
 
         config.discord = DiscordConfig(
-            token=discord_config.get('token', ''),
-            intents=discord_config.get('intents', {}),
-            retry=discord_config.get('retry', {})
+            token=discord_config.get("token", ""),
+            intents=discord_config.get("intents", {}),
+            retry=discord_config.get("retry", {}),
         )
 
         # 加载聊天控制配置
-        chat_config = config_data.get('chat', {})
+        chat_config = config_data.get("chat", {})
         config.chat = ChatConfig(
-            guild_list_type=chat_config.get('guild_list_type', 'whitelist'),
-            guild_list=chat_config.get('guild_list', []),
-            channel_list_type=chat_config.get('channel_list_type', 'whitelist'),
-            channel_list=chat_config.get('channel_list', []),
-            thread_list_type=chat_config.get('thread_list_type', 'whitelist'),
-            thread_list=chat_config.get('thread_list', []),
-            user_list_type=chat_config.get('user_list_type', 'whitelist'),
-            user_list=chat_config.get('user_list', []),
-            allow_thread_interaction=chat_config.get('allow_thread_interaction', True),
-            inherit_channel_permissions=chat_config.get('inherit_channel_permissions', True),
-            inherit_channel_memory=chat_config.get('inherit_channel_memory', True)
+            guild_list_type=chat_config.get("guild_list_type", "whitelist"),
+            guild_list=chat_config.get("guild_list", []),
+            channel_list_type=chat_config.get("channel_list_type", "whitelist"),
+            channel_list=chat_config.get("channel_list", []),
+            thread_list_type=chat_config.get("thread_list_type", "whitelist"),
+            thread_list=chat_config.get("thread_list", []),
+            user_list_type=chat_config.get("user_list_type", "whitelist"),
+            user_list=chat_config.get("user_list", []),
+            allow_thread_interaction=chat_config.get("allow_thread_interaction", True),
+            inherit_channel_permissions=chat_config.get("inherit_channel_permissions", True),
+            inherit_channel_memory=chat_config.get("inherit_channel_memory", True),
         )
 
         # 加载 MaiBot 服务器配置
-        maibot_config = config_data.get('maibot_server', {})
+        maibot_config = config_data.get("maibot_server", {})
         config.maibot_server = MaiBotServerConfig(
-            host=maibot_config.get('host', '127.0.0.1'),
-            port=maibot_config.get('port', 8000),
-            platform_name=maibot_config.get('platform_name', 'discord_bot_instance_1'),
-            token=maibot_config.get('token')
+            host=maibot_config.get("host", "127.0.0.1"),
+            port=maibot_config.get("port", 8000),
+            platform_name=maibot_config.get("platform_name", "discord_bot_instance_1"),
+            token=maibot_config.get("token"),
         )
 
         # 加载调试配置
-        debug_config = config_data.get('debug', {})
+        debug_config = config_data.get("debug", {})
         config.debug = DebugConfig(
-            level=debug_config.get('level', 'INFO'),
-            log_file=debug_config.get('log_file', 'logs/discord_adapter.log')
+            level=debug_config.get("level", "INFO"), log_file=debug_config.get("log_file", "logs/discord_adapter.log")
         )
 
         # 加载语音配置
-        voice_config_data = config_data.get('voice', {})
+        voice_config_data = config_data.get("voice", {})
         if voice_config_data:
             try:
                 # 加载 Azure 配置
-                azure_data = voice_config_data.get('azure', {})
+                azure_data = voice_config_data.get("azure", {})
                 azure_cfg = AzureVoiceConfig(
-                    subscription_key=azure_data.get('subscription_key', ''),
-                    region=azure_data.get('region', 'eastasia'),
-                    tts_voice=azure_data.get('tts_voice', 'zh-CN-XiaoxiaoNeural'),
-                    stt_language=azure_data.get('stt_language', 'zh-CN')
+                    subscription_key=azure_data.get("subscription_key", ""),
+                    region=azure_data.get("region", "eastasia"),
+                    tts_voice=azure_data.get("tts_voice", "zh-CN-XiaoxiaoNeural"),
+                    stt_language=azure_data.get("stt_language", "zh-CN"),
                 )
 
                 # 加载阿里云配置
-                aliyun_data = voice_config_data.get('aliyun', {})
+                aliyun_data = voice_config_data.get("aliyun", {})
                 aliyun_cfg = AliyunVoiceConfig(
-                    access_key_id=aliyun_data.get('access_key_id', ''),
-                    access_key_secret=aliyun_data.get('access_key_secret', ''),
-                    app_key=aliyun_data.get('app_key', '')
+                    access_key_id=aliyun_data.get("access_key_id", ""),
+                    access_key_secret=aliyun_data.get("access_key_secret", ""),
+                    app_key=aliyun_data.get("app_key", ""),
                 )
 
                 # 加载 AI Hobbyist TTS 配置
-                ai_hobbyist_data = voice_config_data.get('ai_hobbyist', {})
+                ai_hobbyist_data = voice_config_data.get("ai_hobbyist", {})
 
                 ai_hobbyist_cfg = AIHobbyistVoiceConfig(
-                    api_base=ai_hobbyist_data.get('api_base', 'https://gsv2p.acgnai.top'),
-                    api_token=ai_hobbyist_data.get('api_token'),
-                    model_name=ai_hobbyist_data.get('model_name', '崩坏三-中文-爱莉希雅_ZH'),
-                    language=ai_hobbyist_data.get('language', '中文'),
-                    emotion=ai_hobbyist_data.get('emotion', '默认')
+                    api_base=ai_hobbyist_data.get("api_base", "https://gsv2p.acgnai.top"),
+                    api_token=ai_hobbyist_data.get("api_token"),
+                    model_name=ai_hobbyist_data.get("model_name", "崩坏三-中文-爱莉希雅_ZH"),
+                    language=ai_hobbyist_data.get("language", "中文"),
+                    emotion=ai_hobbyist_data.get("emotion", "默认"),
                 )
 
                 # 加载 SiliconFlow 配置
-                siliconflow_data = voice_config_data.get('siliconflow', {})
+                siliconflow_data = voice_config_data.get("siliconflow", {})
                 siliconflow_cfg = SiliconFlowVoiceConfig(
-                    api_key=siliconflow_data.get('api_key', ''),
-                    api_base=siliconflow_data.get('api_base', 'https://api.siliconflow.cn/v1'),
-                    tts_model=siliconflow_data.get('tts_model', 'fnlp/MOSS-TTSD-v0.5'),
-                    tts_voice=siliconflow_data.get('tts_voice', 'fnlp/MOSS-TTSD-v0.5:alex'),
-                    stt_model=siliconflow_data.get('stt_model', 'FunAudioLLM/SenseVoiceSmall'),
-                    response_format=siliconflow_data.get('response_format', 'pcm'),
-                    sample_rate=siliconflow_data.get('sample_rate', 48000),
-                    speed=siliconflow_data.get('speed', 1.0)
+                    api_key=siliconflow_data.get("api_key", ""),
+                    api_base=siliconflow_data.get("api_base", "https://api.siliconflow.cn/v1"),
+                    tts_model=siliconflow_data.get("tts_model", "fnlp/MOSS-TTSD-v0.5"),
+                    tts_voice=siliconflow_data.get("tts_voice", "fnlp/MOSS-TTSD-v0.5:alex"),
+                    stt_model=siliconflow_data.get("stt_model", "FunAudioLLM/SenseVoiceSmall"),
+                    response_format=siliconflow_data.get("response_format", "pcm"),
+                    sample_rate=siliconflow_data.get("sample_rate", 48000),
+                    speed=siliconflow_data.get("speed", 1.0),
                 )
 
                 # 创建 VoiceConfig
-                raw_tts_provider = voice_config_data.get('tts_provider', 'azure')
+                raw_tts_provider = voice_config_data.get("tts_provider", "azure")
 
                 config.voice = VoiceConfig(
-                    enabled=voice_config_data.get('enabled', False),
-                    voice_channel_whitelist=voice_config_data.get('voice_channel_whitelist', []),
-                    check_interval=voice_config_data.get('check_interval', 10),
+                    enabled=voice_config_data.get("enabled", False),
+                    voice_channel_whitelist=voice_config_data.get("voice_channel_whitelist", []),
+                    check_interval=voice_config_data.get("check_interval", 10),
                     tts_provider=raw_tts_provider,
-                    stt_provider=voice_config_data.get('stt_provider', 'azure'),
+                    stt_provider=voice_config_data.get("stt_provider", "azure"),
                     azure=azure_cfg,
                     aliyun=aliyun_cfg,
                     ai_hobbyist=ai_hobbyist_cfg,
-                    siliconflow=siliconflow_cfg
+                    siliconflow=siliconflow_cfg,
                 )
             except (KeyError, TypeError, ValueError) as e:
                 # 忽略 voice 配置解析错误，保持默认
@@ -150,9 +149,14 @@ def load_config(config_path: str = "config.toml") -> GlobalConfig:
         raise
 
 
-def is_user_allowed(config: GlobalConfig, user_id: int,
-                   guild_id: int = None, channel_id: int = None,
-                   thread_id: int = None, is_thread: bool = False) -> bool:
+def is_user_allowed(
+    config: GlobalConfig,
+    user_id: int,
+    guild_id: int = None,
+    channel_id: int = None,
+    thread_id: int = None,
+    is_thread: bool = False,
+) -> bool:
     """检查用户是否被允许使用
 
     Args:
@@ -167,8 +171,9 @@ def is_user_allowed(config: GlobalConfig, user_id: int,
         bool: 是否允许该用户使用
     """
     chat_config = config.chat
-    logger.debug("权限检查开始: 用户={user_id}, 服务器={guild_id}, "
-                 "频道={channel_id}, 子区={thread_id}, 是否子区={is_thread}")
+    logger.debug(
+        "权限检查开始: 用户={user_id}, 服务器={guild_id}, 频道={channel_id}, 子区={thread_id}, 是否子区={is_thread}"
+    )
 
     # 如果是子区消息且全局禁用子区交互
     if is_thread and not chat_config.allow_thread_interaction:
