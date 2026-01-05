@@ -3,7 +3,7 @@
 MaiBot 与 Discord 的适配器。
 
 这里是MaiBot非官方服务器，欢迎加入
-[![Discord](https://img.shields.io/badge/Discord-MaiBot-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/ue4xJw7s)
+[![Discord](https://img.shields.io/badge/Discord-MaiBot-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/cdn9k3tXm6)
 
 [MaiBot原仓库链接](https://github.com/Mai-with-u/MaiBot)
 
