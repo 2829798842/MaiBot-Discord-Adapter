@@ -6,6 +6,7 @@ import asyncio
 import time
 import traceback
 from importlib import import_module
+from typing import Optional
 
 import discord
 from maim_message import (
@@ -606,5 +607,32 @@ class DiscordClientManager:
         return self.client.get_user(user_id)
 
 
-# 创建全局客户端实例
-discord_client: DiscordClientManager = DiscordClientManager()
+# 全局客户端实例（延迟初始化，由插件调用 get_discord_client() 获取）
+_discord_client_instance: Optional[DiscordClientManager] = None
+
+
+def get_discord_client() -> DiscordClientManager:
+    """获取 Discord 客户端单例（延迟初始化）
+    
+    Returns:
+        DiscordClientManager: Discord 客户端管理器实例
+    """
+    global _discord_client_instance
+    if _discord_client_instance is None:
+        logger.info("正在创建 Discord 客户端实例...")
+        _discord_client_instance = DiscordClientManager()
+    return _discord_client_instance
+
+
+# 为了向后兼容，保留 discord_client 变量名（但改为属性访问）
+class _DiscordClientProxy:
+    """Discord 客户端代理，用于延迟初始化"""
+    
+    def __getattr__(self, name):
+        return getattr(get_discord_client(), name)
+    
+    def __setattr__(self, name, value):
+        setattr(get_discord_client(), name, value)
+
+
+discord_client = _DiscordClientProxy()

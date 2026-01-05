@@ -607,4 +607,22 @@ class DiscordSendHandler:
         return channel if isinstance(channel, discord.VoiceChannel) else None
 
 
-send_handler = DiscordSendHandler()
+# 延迟初始化 - 在配置注入后才创建实际实例
+_send_handler_instance: Optional[DiscordSendHandler] = None
+
+
+def get_send_handler() -> DiscordSendHandler:
+    """获取发送处理器实例，如果不存在则创建"""
+    global _send_handler_instance
+    if _send_handler_instance is None:
+        _send_handler_instance = DiscordSendHandler()
+    return _send_handler_instance
+
+
+class _SendHandlerProxy:
+    """发送处理器代理类，实现延迟初始化"""
+    def __getattr__(self, name):
+        return getattr(get_send_handler(), name)
+
+
+send_handler = _SendHandlerProxy()
