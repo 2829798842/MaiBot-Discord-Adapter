@@ -3,7 +3,7 @@
 # MaiBot Discord Adapter
 
 <p>
-  <a href="https://discord.gg/ue4xJw7s">
+  <a href="https://discord.gg/cdn9k3tXm6">
     <img src="https://img.shields.io/badge/Discord-MaiBot社区-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord">
   </a>
   <a href="LICENSE">
