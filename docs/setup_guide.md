@@ -157,19 +157,13 @@ pip install -i https://mirrors.aliyun.com/pypi/simple -r requirements.txt --upgr
 
 ### 第一步：创建配置文件
 
-1. 复制模板配置文件：
-   ```bash
-   # Windows
-   copy template\template_config.toml config.toml
-   
-   # Linux/Mac
-   cp template/template_config.toml config.toml
-   ```
+插件化后变为自动生成
 
 ### 第二步：编辑配置文件
 
-打开 `config.toml` 并修改以下内容：
+打开 `config.toml` 或webui并修改以下内容：
 
+由于插件注释解析不佳，因此保留旧版配置详情，具体可进行字符查找
 ```toml
 [inner]
 version = "1.0.0" # 版本号
@@ -177,7 +171,6 @@ version = "1.0.0" # 版本号
 
 [discord] # Discord Bot 设置
 token = "your_discord_bot_token_here"  # ← 填入你的 Bot Token
-bot_id = "your_bot_id_here"  # ← 填入你的 Bot ID（可选，建议填写）
 
 # Discord 权限意图设置
 [discord.intents]
@@ -226,20 +219,9 @@ log_file = "logs/discord_adapter.log" # 日志文件路径
 
 ---
 
-## 运行程序
+## 运行程序 
 
-### 使用 uv 运行 (推荐)
-
-```bash
-uv run python main.py
-```
-
-### 传统方式运行
-
-```bash
-# 确保已激活虚拟环境
-python main.py
-```
+**注意**新版适配器已经随本体MaiCore一起启动
 
 ### 成功运行的标志
 
@@ -260,35 +242,25 @@ INFO - Bot 已准备就绪
 **原因**：网络代理配置问题
 
 **解决方案**：
+强烈建议打开您所使用vpn的tun模式
+如果还不行这里是一些相关解决issue
+- [discord.py  issue](https://github.com/Rapptz/discord.py/issues/5880)
+- [discord.py  issue](https://github.com/Rapptz/discord.py/issues/4159)
+- 
+同时跟您梯子节点质量等也有关
 
-**Windows 系统**：
-```cmd
-set http_proxy=http://127.0.0.1:7890
-set https_proxy=http://127.0.0.1:7890
-```
-（端口改为你的代理端口）
+##### 注:作者本人弃用**mihono内核(clashverge or clashparty)**转用**singbox内核**后再未发现类似问题
 
-**Linux/Mac 系统**：
-```bash
-export http_proxy=http://127.0.0.1:7890
-export https_proxy=http://127.0.0.1:7890
-```
-
-如果仍然无法连接：
-1. 尝试开启 VPN 的 TUN 模式
-2. 更换更稳定的代理服务
-3. 检查防火墙设置
-4. 亦或者使用境外服务器
 
 ### Q2: Bot 收不到消息
 
 **检查清单**：
 
-1. ✅ 确认已启用 `Message Content Intent`
-2. ✅ 检查 `config.toml` 中 `message_content = true`
-3. ✅ 确认 Bot 已成功加入服务器
-4. ✅ 检查频道权限（Bot 需要"查看频道"和"发送消息"权限）
-5. ✅ 查看日志中是否有错误信息
+1.  确认已启用 `Message Content Intent`
+2.  检查 `config.toml` 中 `message_content = true`
+3.  确认 Bot 已成功加入服务器
+4.  检查频道权限（Bot 需要"查看频道"和"发送消息"权限）
+5.  查看日志中是否有错误信息
 
 ### Q3: Bot Token 无效
 
@@ -313,7 +285,7 @@ export https_proxy=http://127.0.0.1:7890
 ### Q6: 如何更新到最新版本？
 
 ```bash
-git pull origin main  # 或 voice 分支
+git pull origin main
 pip install -r requirements.txt --upgrade
 ```
 

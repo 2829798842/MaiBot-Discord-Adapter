@@ -1,0 +1,54 @@
+name: Ruff Auto Format
+
+on:
+  workflow_dispatch:  # 手动触发
+    inputs:
+      branch:
+        description: '要格式化的分支'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - master
+          - dev
+
+permissions:
+  contents: write
+
+jobs:
+  ruff-format:
+    name: Ruff Format & Fix
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Run Ruff Fix
+        run: ruff check --fix --unsafe-fixes src/ || true
+
+      - name: Run Ruff Format
+        run: ruff format src/
+
+      - name: Commit changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "🤖 自动格式化代码 [skip ci]"
+            git push
+          fi

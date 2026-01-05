@@ -6,7 +6,7 @@
 # 模块导入
 from .logger import logger
 from .config import global_config
-from .mmc_com_layer import router, mmc_start_com, mmc_stop_com
+from .mmc_com_layer import router, mmc_start_com, mmc_stop_com, get_router, reset_router
 
 __all__ = [
     "logger",
@@ -14,4 +14,6 @@ __all__ = [
     "router",
     "mmc_start_com",
     "mmc_stop_com",
+    "get_router",
+    "reset_router",
 ]
