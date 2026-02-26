@@ -2,11 +2,13 @@
 主要功能：处理来自 Discord 的消息并转换为 MaiBot 标准格式
 """
 
+import asyncio
 import base64
 import re
 import time
 import traceback
 from typing import List, Optional
+import aiohttp
 import discord
 from maim_message import BaseMessageInfo, UserInfo, GroupInfo, FormatInfo, MessageBase, Seg
 from ..logger import logger
@@ -14,11 +16,12 @@ from ..config import global_config
 from .emoji_mapping import get_emoji_meaning, format_reaction_for_ai
 from ..recv_handler.discord_client import discord_client
 
+
 class DiscordMessageHandler:
     """Discord 消息处理器
-    
+
     负责将 Discord 消息转换为 MaiBot 标准格式
-    
+
     Attributes:
         router: MaiBot 消息路由器（在 main.py 中设置）
         send_handler: Discord 发送处理器引用，用于更新上下文映射
@@ -34,17 +37,17 @@ class DiscordMessageHandler:
 
     async def handle_discord_message(self, message: discord.Message):
         """处理 Discord 消息
-        
+
         Args:
             message: Discord 消息对象
         """
         try:
             logger.debug("开始处理 Discord 消息转换:")
             logger.debug(f"  原始消息ID: {message.id}")
-            channel_name = message.channel.name if hasattr(message.channel, 'name') else 'DM'
+            channel_name = message.channel.name if hasattr(message.channel, "name") else "DM"
             logger.debug(f"  来源频道: {channel_name} (ID: {message.channel.id})")
-            guild_name = message.guild.name if message.guild else '私信'
-            guild_id = message.guild.id if message.guild else 'N/A'
+            guild_name = message.guild.name if message.guild else "私信"
+            guild_id = message.guild.id if message.guild else "N/A"
             logger.debug(f"  来源服务器: {guild_name} (ID: {guild_id})")
 
             # 转换消息格式
@@ -70,16 +73,21 @@ class DiscordMessageHandler:
 
                 # 更新发送处理器的上下文映射
                 if self.send_handler:
-                    if ((hasattr(message.channel, 'parent') and message.channel.parent is not None
-                         and global_config.chat.inherit_channel_memory)):
+                    if (
+                        hasattr(message.channel, "parent")
+                        and message.channel.parent is not None
+                        and global_config.chat.inherit_channel_memory
+                    ):
                         # 子区消息：更新上下文映射
                         parent_channel_id = str(message.channel.parent.id)
                         thread_id = str(message.channel.id)
                         self.send_handler.update_thread_context(parent_channel_id, thread_id)
                         logger.debug(f"更新子区上下文映射: 父频道{parent_channel_id} -> 子区{thread_id}")
-                    elif (hasattr(message.channel, 'type') and
-                          message.channel.type == discord.ChannelType.text and
-                          global_config.chat.inherit_channel_memory):
+                    elif (
+                        hasattr(message.channel, "type")
+                        and message.channel.type == discord.ChannelType.text
+                        and global_config.chat.inherit_channel_memory
+                    ):
                         # 父频道消息：清除该频道的子区映射，确保回复发送到父频道
                         parent_channel_id = str(message.channel.id)
                         self.send_handler.clear_thread_context(parent_channel_id)
@@ -96,10 +104,10 @@ class DiscordMessageHandler:
 
     async def _convert_discord_to_maim(self, message: discord.Message) -> MessageBase | None:
         """将 Discord 消息转换为 MaiBot 格式
-        
+
         Args:
             message: Discord 消息对象
-            
+
         Returns:
             MessageBase | None: 转换后的 MaiBot 消息，转换失败时返回 None
         """
@@ -111,17 +119,17 @@ class DiscordMessageHandler:
             username = message.author.name  # Discord用户名
             display_name = message.author.display_name  # 显示名称（全局昵称或用户名）
             # 服务器昵称
-            server_nickname = (getattr(message.author, 'nick', None)
-                             if hasattr(message.author, 'nick') else None)
+            server_nickname = getattr(message.author, "nick", None) if hasattr(message.author, "nick") else None
             # 全局显示名称
-            global_name = (getattr(message.author, 'global_name', None)
-                         if hasattr(message.author, 'global_name') else None)
+            global_name = (
+                getattr(message.author, "global_name", None) if hasattr(message.author, "global_name") else None
+            )
 
             user_info = UserInfo(
                 platform=global_config.maibot_server.platform_name,
                 user_id=str(message.author.id),
                 user_nickname=display_name,  # 主要显示名称
-                user_cardname=server_nickname  # 服务器内的昵称
+                user_cardname=server_nickname,  # 服务器内的昵称
             )
 
             # 详细记录用户信息
@@ -144,15 +152,16 @@ class DiscordMessageHandler:
 
             if message.guild:
                 # 检查是否为Thread消息
-                is_thread_message = (hasattr(message.channel, 'parent')
-                                    and message.channel.parent is not None)
+                is_thread_message = hasattr(message.channel, "parent") and message.channel.parent is not None
 
                 if is_thread_message:
                     # Thread消息：根据配置决定是否继承父频道记忆
                     thread_name = message.channel.name
-                    parent_channel_name = (message.channel.parent.name
-                                         if hasattr(message.channel.parent, 'name')
-                                         else f"频道{message.channel.parent.id}")
+                    parent_channel_name = (
+                        message.channel.parent.name
+                        if hasattr(message.channel.parent, "name")
+                        else f"频道{message.channel.parent.id}"
+                    )
 
                     if global_config.chat.inherit_channel_memory:
                         # 继承父频道记忆：使用父频道ID作为群组ID，但在消息中保留子区信息
@@ -165,9 +174,11 @@ class DiscordMessageHandler:
                         group_info = GroupInfo(
                             platform=global_config.maibot_server.platform_name,
                             group_id=group_id,  # 父频道ID - 用于记忆共享
-                            group_name=actual_context  # 包含子区上下文的名称
+                            group_name=actual_context,  # 包含子区上下文的名称
                         )
-                        logger.debug(f"子区继承父频道记忆: 子区={thread_name}, 使用父频道ID={group_id}, 但保留子区上下文")
+                        logger.debug(
+                            f"子区继承父频道记忆: 子区={thread_name}, 使用父频道ID={group_id}, 但保留子区上下文"
+                        )
 
                         # 重要：标记这是一个从子区发出的消息，用于回复时的路由
                         thread_context_marker = True
@@ -178,9 +189,7 @@ class DiscordMessageHandler:
                         # 格式: 子区名称 [父频道名称] @ 服务器名称
                         group_name = f"{thread_name} [{parent_channel_name}] @ {message.guild.name}"
                         group_info = GroupInfo(
-                            platform=global_config.maibot_server.platform_name,
-                            group_id=group_id,
-                            group_name=group_name
+                            platform=global_config.maibot_server.platform_name, group_id=group_id, group_name=group_name
                         )
                         logger.debug(f"子区使用独立记忆: 子区ID={group_id}")
                         thread_context_marker = False
@@ -192,15 +201,16 @@ class DiscordMessageHandler:
                     logger.debug(f"服务器信息: {message.guild.name} (ID: {message.guild.id})")
                 else:
                     # 普通频道消息：使用频道作为群组
-                    channel_name = (message.channel.name if hasattr(message.channel, 'name')
-                                  else f"频道{message.channel.id}")
+                    channel_name = (
+                        message.channel.name if hasattr(message.channel, "name") else f"频道{message.channel.id}"
+                    )
                     # 格式: 频道名称 @ 服务器名称
                     group_name = f"{channel_name} @ {message.guild.name}"
 
                     group_info = GroupInfo(
                         platform=global_config.maibot_server.platform_name,
                         group_id=str(message.channel.id),  # 使用频道ID作为群组ID
-                        group_name=group_name
+                        group_name=group_name,
                     )
                     logger.debug(f"群组信息 (频道): {group_info.group_name} (ID: {group_info.group_id})")
                     logger.debug(f"服务器信息: {message.guild.name} (ID: {message.guild.id})")
@@ -237,11 +247,11 @@ class DiscordMessageHandler:
             # 处理附件（图片等）
             for attachment in message.attachments:
                 logger.debug(f"处理附件: {attachment.filename}, 类型: {attachment.content_type}")
-                if attachment.content_type and attachment.content_type.startswith('image/'):
+                if attachment.content_type and attachment.content_type.startswith("image/"):
                     try:
                         # 下载图片并转换为 base64
                         image_data = await attachment.read()
-                        image_base64 = base64.b64encode(image_data).decode('utf-8')
+                        image_base64 = base64.b64encode(image_data).decode("utf-8")
                         message_segments.append(Seg(type="image", data=image_base64))
                         content_formats.append("image")
                         logger.debug(f"处理图片附件: {attachment.filename}")
@@ -250,29 +260,64 @@ class DiscordMessageHandler:
                 else:
                     logger.debug(f"跳过非图片附件: {attachment.filename} ({attachment.content_type})")
 
-            # 处理Discord stickers（贴纸）
+            # 处理Discord stickers（贴纸）— 下载贴纸图片并传递给 MaiBot Core 图像识别
             for sticker in message.stickers:
                 try:
-                    logger.debug(f"发现Discord贴纸: {sticker.name} (ID: {sticker.id})")
-                    # Discord贴纸可以通过URL获取图片
-                    if hasattr(sticker, 'url'):
-                        # 这里可以下载贴纸图片并转换为base64
-                        # 暂时记录为文本，包含贴纸信息
+                    sticker_format = getattr(sticker, "format", None)
+                    format_name = sticker_format.name if sticker_format else "unknown"
+                    logger.debug(f"发现Discord贴纸: {sticker.name} (ID: {sticker.id}, 格式: {format_name})")
+
+                    is_lottie = sticker_format and sticker_format == discord.StickerFormatType.lottie
+                    sticker_data = None
+
+                    if not is_lottie:
+                        # PNG / APNG / GIF 格式：优先使用 sticker.read()
+                        try:
+                            sticker_data = await sticker.read()
+                            logger.debug(f"通过 read() 下载贴纸成功: {sticker.name}")
+                        except (discord.HTTPException, discord.NotFound, TypeError) as e:
+                            logger.debug(f"read() 下载失败，将尝试 CDN: {e}")
+
+                    # 如果 read() 不可用（Lottie）或失败，通过 CDN 下载 PNG 预览
+                    if sticker_data is None:
+                        cdn_url = f"https://media.discordapp.net/stickers/{sticker.id}.png?size=512"
+                        try:
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(cdn_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                                    if resp.status == 200 and resp.content_type.startswith("image/"):
+                                        sticker_data = await resp.read()
+                                        logger.debug(
+                                            f"通过 CDN 下载贴纸成功: {sticker.name} ({len(sticker_data)} bytes)"
+                                        )
+                                    else:
+                                        logger.warning(
+                                            f"CDN 下载贴纸失败: HTTP {resp.status}, content_type={resp.content_type}"
+                                        )
+                        except (aiohttp.ClientError, asyncio.TimeoutError) as cdn_e:
+                            logger.warning(f"CDN 下载贴纸失败: {cdn_e}")
+
+                    # 将贴纸数据添加到消息段
+                    if sticker_data:
+                        sticker_base64 = base64.b64encode(sticker_data).decode("utf-8")
+                        message_segments.append(Seg(type="image", data=sticker_base64))
+                        if "image" not in content_formats:
+                            content_formats.append("image")
+                        logger.debug(
+                            f"贴纸已作为图片传递: {sticker.name} ({len(sticker_data)} bytes, 格式: {format_name})"
+                        )
+                    else:
+                        # 所有下载方式都失败，回退为文本
                         sticker_text = f"[贴纸: {sticker.name}]"
-                        if not message.content:
-                            message_segments.append(Seg(type="text", data=sticker_text))
+                        message_segments.append(Seg(type="text", data=sticker_text))
+                        if "text" not in content_formats:
                             content_formats.append("text")
-                        else:
-                            # 如果已有文本内容，将贴纸信息追加
-                            if message_segments and message_segments[-1].type == "text":
-                                message_segments[-1].data += f" {sticker_text}"
-                        logger.debug(f"处理Discord贴纸: {sticker.name}")
+                        logger.warning(f"所有下载方式失败，贴纸回退为文本: {sticker.name}")
+
                 except (AttributeError, TypeError) as e:
                     logger.error(f"处理Discord贴纸失败: {e}")
 
             # 处理回复消息
             if message.reference and message.reference.message_id:
-
                 reply_message_id = str(message.reference.message_id)
 
                 # 获取回复上下文用于显示（可选）
@@ -293,7 +338,7 @@ class DiscordMessageHandler:
                     "original_thread_id": original_thread_id,
                     "thread_name": thread_name,
                     "parent_channel_id": str(message.channel.parent.id),
-                    "inherit_memory": True
+                    "inherit_memory": True,
                 }
                 message_segments.append(Seg(type="thread_context", data=thread_routing_info))
                 logger.debug(f"添加子区路由信息: {thread_routing_info}")
@@ -306,10 +351,7 @@ class DiscordMessageHandler:
             # 构造格式信息
             format_info = FormatInfo(
                 content_format=content_formats if content_formats else ["text"],
-                accept_format=[
-                    "text", "image", "emoji", "reply", "voice", "command", 
-                    "file", "video"
-                ]
+                accept_format=["text", "image", "emoji", "reply", "voice", "command", "file", "video"],
             )
             # 部分格式现在无用
 
@@ -320,7 +362,7 @@ class DiscordMessageHandler:
                 time=message.created_at.timestamp(),
                 user_info=user_info,
                 group_info=group_info,
-                format_info=format_info
+                format_info=format_info,
             )
 
             # 构造完整消息段
@@ -330,9 +372,7 @@ class DiscordMessageHandler:
                 message_segment = Seg(type="seglist", data=message_segments)
 
             return MessageBase(
-                message_info=message_info,
-                message_segment=message_segment,
-                raw_message=message.content or ""
+                message_info=message_info, message_segment=message_segment, raw_message=message.content or ""
             )
 
         except (AttributeError, ValueError, TypeError) as e:
@@ -341,10 +381,10 @@ class DiscordMessageHandler:
 
     async def _process_mentions(self, message: discord.Message) -> dict | None:
         """处理消息中的@提及信息
-        
+
         Args:
             message: Discord消息对象
-            
+
         Returns:
             dict | None: 包含提及信息的字典，没有提及时返回None
         """
@@ -357,10 +397,8 @@ class DiscordMessageHandler:
                 # 获取用户的各种名称信息
                 username = user.name  # Discord用户名
                 display_name = user.display_name  # 显示名称
-                global_name = (getattr(user, 'global_name', None)
-                             if hasattr(user, 'global_name') else None)
-                server_nick = (getattr(user, 'nick', None)
-                             if hasattr(user, 'nick') else None)
+                global_name = getattr(user, "global_name", None) if hasattr(user, "global_name") else None
+                server_nick = getattr(user, "nick", None) if hasattr(user, "nick") else None
                 # 全局或当前服务器名称
 
                 user_data = {
@@ -370,7 +408,7 @@ class DiscordMessageHandler:
                     "global_name": global_name,  # 全局昵称（如果有）
                     "server_nickname": server_nick,  # 服务器内昵称（如果有）
                     "is_bot": user.bot,
-                    "discriminator": getattr(user, 'discriminator', None)  # 用户标识符（旧版Discord）
+                    "discriminator": getattr(user, "discriminator", None),  # 用户标识符（旧版Discord）
                 }
                 users.append(user_data)
                 logger.debug(f"提及用户详情: {username} (ID: {user.id}, 显示名: {display_name})")
@@ -385,20 +423,20 @@ class DiscordMessageHandler:
                     "role_id": str(role.id),
                     "role_name": role.name,
                     "color": str(role.color),
-                    "mentionable": role.mentionable
+                    "mentionable": role.mentionable,
                 }
                 roles.append(role_data)
             mentions_data["roles"] = roles
             logger.debug(f"检测到角色提及: {len(roles)}个角色")
 
         # 处理频道提及
-        if hasattr(message, 'channel_mentions') and message.channel_mentions:
+        if hasattr(message, "channel_mentions") and message.channel_mentions:
             channels = []
             for channel in message.channel_mentions:
                 channel_data = {
                     "channel_id": str(channel.id),
                     "channel_name": channel.name,
-                    "channel_type": str(channel.type)
+                    "channel_type": str(channel.type),
                 }
                 channels.append(channel_data)
             mentions_data["channels"] = channels
@@ -415,14 +453,13 @@ class DiscordMessageHandler:
 
         return mentions_data if mentions_data else None
 
-    async def _process_text_with_emojis(self, text: str,
-                                       message: discord.Message = None) -> List[Seg]:
+    async def _process_text_with_emojis(self, text: str, message: discord.Message = None) -> List[Seg]:
         """处理包含emoji和提及的文本内容
-        
+
         Args:
             text: 原始文本内容
             message: Discord消息对象（用于获取提及信息）
-            
+
         Returns:
             List[Seg]: 处理后的消息段列表
         """
@@ -435,9 +472,8 @@ class DiscordMessageHandler:
                 for pattern in user_mention_patterns:
                     if pattern in processed_text:
                         # 优先使用服务器昵称，然后是全局昵称，最后是显示名称
-                        server_nick = getattr(user, 'nick', None) if hasattr(user, 'nick') else None
-                        global_name = (getattr(user, 'global_name', None)
-                                        if hasattr(user, 'global_name') else None)
+                        server_nick = getattr(user, "nick", None) if hasattr(user, "nick") else None
+                        global_name = getattr(user, "global_name", None) if hasattr(user, "global_name") else None
                         display_name = server_nick or global_name or user.display_name
 
                         processed_text = processed_text.replace(pattern, f"@{display_name}")
@@ -452,7 +488,7 @@ class DiscordMessageHandler:
                     logger.debug(f"替换角色提及: {role_pattern} -> @{role.name}")
 
         # 处理频道提及
-        if message and hasattr(message, 'channel_mentions'):
+        if message and hasattr(message, "channel_mentions"):
             for channel in message.channel_mentions:
                 channel_pattern = f"<#{channel.id}>"
                 if channel_pattern in processed_text:
@@ -466,18 +502,18 @@ class DiscordMessageHandler:
         # Unicode emoji正则表达式
         unicode_emoji_pattern = re.compile(
             "["
-            "\U0001F600-\U0001F64F"
-            "\U0001F300-\U0001F5FF"
-            "\U0001F680-\U0001F6FF"
-            "\U0001F1E0-\U0001F1FF"
-            "\U00002702-\U000027B0"
-            "\U000024C2-\U0001F251" 
-            "]+", 
-            flags=re.UNICODE
+            "\U0001f600-\U0001f64f"
+            "\U0001f300-\U0001f5ff"
+            "\U0001f680-\U0001f6ff"
+            "\U0001f1e0-\U0001f1ff"
+            "\U00002702-\U000027b0"
+            "\U000024c2-\U0001f251"
+            "]+",
+            flags=re.UNICODE,
         )
 
         # Discord自定义emoji正则表达式 (<:name:id> 或 <a:name:id>)
-        discord_custom_emoji_pattern = re.compile(r'<a?:(\w+):(\d+)>')
+        discord_custom_emoji_pattern = re.compile(r"<a?:(\w+):(\d+)>")
 
         # 先检测是否包含emoji
         has_unicode_emoji = bool(unicode_emoji_pattern.search(text))
@@ -497,14 +533,14 @@ class DiscordMessageHandler:
         for match in discord_custom_emoji_pattern.finditer(text):
             # 添加emoji前的文本
             if match.start() > current_pos:
-                before_text = text[current_pos:match.start()]
+                before_text = text[current_pos : match.start()]
                 if before_text.strip():
                     segments.append(Seg(type="text", data=before_text))
 
             # 添加自定义emoji信息（作为文本，包含名称）
             emoji_name = match.group(1)
             emoji_id = match.group(2)
-            is_animated = text[match.start():match.end()].startswith('<a:')
+            is_animated = text[match.start() : match.end()].startswith("<a:")
 
             emoji_text = f"[{emoji_name}]"
             if is_animated:
@@ -530,10 +566,10 @@ class DiscordMessageHandler:
     async def _get_reply_context(self, message: discord.Message) -> str | None:
         """获取回复上下文信息，格式化为易读文本
         "[回复<用户名:用户ID>：被回复内容]，说："的格式。
-        
+
         Args:
             message: 包含回复引用的Discord消息对象
-            
+
         Returns:
             str | None: 格式化后的回复上下文文本，获取失败时返回None
         """
@@ -544,8 +580,7 @@ class DiscordMessageHandler:
             # 尝试获取被回复的消息
             referenced_message = None
             try:
-                if (hasattr(message.reference, 'cached_message') and
-                    message.reference.cached_message):
+                if hasattr(message.reference, "cached_message") and message.reference.cached_message:
                     referenced_message = message.reference.cached_message
                 else:
                     message_id = message.reference.message_id
@@ -586,13 +621,9 @@ class DiscordMessageHandler:
             logger.error(f"处理回复上下文时发生错误: {e}")
             return f"[回复消息{message.reference.message_id}]，说："
 
-    async def handle_reaction_event(
-        self,
-        event_type: str,
-        payload: discord.RawReactionActionEvent
-    ) -> None:
+    async def handle_reaction_event(self, event_type: str, payload: discord.RawReactionActionEvent) -> None:
         """处理reaction事件
-        
+
         Args:
             event_type: 事件类型
             payload: Discord reaction事件数据
@@ -617,7 +648,7 @@ class DiscordMessageHandler:
             # 发送到 MaiBot Core
             if self.router:
                 await self.router.send_message(maim_message)
-                action_text = "添加" if event_type == 'reaction_add' else "移除"
+                action_text = "添加" if event_type == "reaction_add" else "移除"
                 logger.info(
                     f"已转发 {event_type} 事件到 MaiBot Core: "
                     f"用户 {payload.user_id} {action_text}表情 {payload.emoji} "
@@ -631,13 +662,10 @@ class DiscordMessageHandler:
             logger.error(f"错误详情: {traceback.format_exc()}")
 
     async def _convert_reaction_to_maim(
-        self,
-        event_type: str,
-        payload: discord.RawReactionActionEvent
+        self, event_type: str, payload: discord.RawReactionActionEvent
     ) -> Optional[MessageBase]:
         """转换reaction事件为MaiBot消息格式"""
         try:
-
             # 获取Discord客户端
             client = discord_client.client
             if not client:
@@ -687,7 +715,7 @@ class DiscordMessageHandler:
                 platform=global_config.maibot_server.platform_name,
                 user_id=str(user.id),
                 user_nickname=user_display_name,
-                user_cardname=server_nickname
+                user_cardname=server_nickname,
             )
 
             logger.debug(f"Reaction用户信息: {user_display_name} (ID: {user.id})")
@@ -717,7 +745,7 @@ class DiscordMessageHandler:
                 if channel and isinstance(channel, discord.Thread):
                     is_thread = True
                     thread_name = channel.name
-                    parent_channel = getattr(channel, 'parent', None)
+                    parent_channel = getattr(channel, "parent", None)
 
                     if parent_channel and global_config.chat.inherit_channel_memory:
                         # 子区继承父频道记忆模式
@@ -739,7 +767,7 @@ class DiscordMessageHandler:
                         logger.debug(f"子区使用独立记忆: 子区ID={group_id}")
                 elif channel:
                     # 普通频道
-                    channel_name = channel.name if hasattr(channel, 'name') else f"频道{channel.id}"
+                    channel_name = channel.name if hasattr(channel, "name") else f"频道{channel.id}"
                     group_id = str(channel.id)
                     group_name = channel_name
                     if guild_name:
@@ -752,9 +780,7 @@ class DiscordMessageHandler:
                         group_name += f" @ {guild_name}"
 
                 group_info = GroupInfo(
-                    platform=global_config.maibot_server.platform_name,
-                    group_id=group_id,
-                    group_name=group_name
+                    platform=global_config.maibot_server.platform_name, group_id=group_id, group_name=group_name
                 )
                 logger.debug(f"Reaction群组信息: {group_name} (ID: {group_id})")
 
@@ -775,8 +801,7 @@ class DiscordMessageHandler:
             logger.debug(f"Emoji类型: {'Unicode' if emoji.is_unicode_emoji() else '自定义'}")
 
             # 构造消息内容
-            action_text = "添加了" if event_type == 'reaction_add' else "移除了"
-
+            action_text = "添加了" if event_type == "reaction_add" else "移除了"
 
             description = format_reaction_for_ai(emoji_str, emoji_name, 1, user_display_name)
             # 调整描述文本以匹配实际操作
@@ -793,7 +818,7 @@ class DiscordMessageHandler:
             # 添加reaction元数据段（供MaiBot Core和插件使用）
             reaction_metadata = {
                 "event_type": event_type,
-                "action": "add" if event_type == 'reaction_add' else "remove",
+                "action": "add" if event_type == "reaction_add" else "remove",
                 "user_id": str(payload.user_id),
                 "user_name": user_display_name,
                 "message_id": str(payload.message_id),
@@ -811,15 +836,11 @@ class DiscordMessageHandler:
             # 构造格式信息
             format_info = FormatInfo(
                 content_format=["text", "reaction_event"],
-                accept_format=[
-                    "text", "image", "emoji", "reply", "voice", "command",
-                    "file", "video", "reaction"
-                ]
+                accept_format=["text", "image", "emoji", "reply", "voice", "command", "file", "video", "reaction"],
             )
 
             # 构造唯一消息ID（使用原始消息ID、用户ID、事件类型和时间戳的组合）
             timestamp = int(time.time() * 1000)  # 毫秒级时间戳确保唯一性
-
 
             unique_message_id = f"reaction_{payload.message_id}_"
             unique_message_id += f"{payload.user_id}_{event_type}_{timestamp}"
@@ -831,7 +852,7 @@ class DiscordMessageHandler:
                 time=time.time(),
                 user_info=user_info,
                 group_info=group_info,
-                format_info=format_info
+                format_info=format_info,
             )
 
             # 构造完整消息段
@@ -840,11 +861,7 @@ class DiscordMessageHandler:
             else:
                 message_segment = Seg(type="seglist", data=message_segments)
 
-            return MessageBase(
-                message_info=message_info,
-                message_segment=message_segment,
-                raw_message=description
-            )
+            return MessageBase(message_info=message_info, message_segment=message_segment, raw_message=description)
 
         except Exception as e:  # pylint: disable=broad-except
             logger.error(f"转换 reaction 事件时发生错误: {e}")
