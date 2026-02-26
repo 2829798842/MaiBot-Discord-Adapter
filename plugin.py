@@ -108,12 +108,16 @@ class DiscordAdapterPlugin(BasePlugin):
             "messages": ConfigField(type=bool, default=True, description="消息权限 (接收普通消息)"),
             "guilds": ConfigField(type=bool, default=True, description="服务器权限 (获取服务器信息)"),
             "dm_messages": ConfigField(type=bool, default=True, description="私信权限 (接收私信)"),
-            "message_content": ConfigField(type=bool, default=True, description="消息内容权限 (必须启用，否则无法读取消息内容)"),
+            "message_content": ConfigField(
+                type=bool, default=True, description="消息内容权限 (必须启用，否则无法读取消息内容)"
+            ),
             "voice_states": ConfigField(type=bool, default=True, description="语音状态权限 (语音功能必须启用)"),
         },
         "discord.retry": {
             "retry_delay": ConfigField(type=int, default=5, description="断线重试间隔 (秒)"),
-            "connection_check_interval": ConfigField(type=int, default=30, description="连接状态检查间隔 (秒，建议30秒以上)"),
+            "connection_check_interval": ConfigField(
+                type=int, default=30, description="连接状态检查间隔 (秒，建议30秒以上)"
+            ),
         },
         "chat": {
             "guild_list_type": ConfigField(
@@ -155,7 +159,9 @@ class DiscordAdapterPlugin(BasePlugin):
                 choices=["whitelist", "blacklist"],
             ),
             "user_list": ConfigField(type=list, default=[], description="用户 ID 名单"),
-            "allow_thread_interaction": ConfigField(type=bool, default=True, description="是否允许在子区(Thread)中互动"),
+            "allow_thread_interaction": ConfigField(
+                type=bool, default=True, description="是否允许在子区(Thread)中互动"
+            ),
             "inherit_channel_permissions": ConfigField(
                 type=bool,
                 default=True,
@@ -170,7 +176,9 @@ class DiscordAdapterPlugin(BasePlugin):
         "maibot_server": {
             "host": ConfigField(type=str, default="127.0.0.1", description="MaiBot Core 主机地址"),
             "port": ConfigField(type=int, default=8000, description="MaiBot Core 端口"),
-            "platform_name": ConfigField(type=str, default="discord_bot_instance_1", description="平台标识符 (多实例运行时需唯一)"),
+            "platform_name": ConfigField(
+                type=str, default="discord_bot_instance_1", description="平台标识符 (多实例运行时需唯一)"
+            ),
         },
         "debug": {
             "level": ConfigField(
@@ -181,56 +189,57 @@ class DiscordAdapterPlugin(BasePlugin):
             ),
             "log_file": ConfigField(type=str, default="logs/discord_adapter.log", description="日志文件保存路径"),
         },
-        "voice": {
-            "enabled": ConfigField(type=bool, default=False, description="是否启用语音功能 (需同时开启voice_states权限)"),
-            "voice_channel_whitelist": ConfigField(
-                type=list,
-                default=[],
-                description="语音频道白名单 (为空则不限制，自动跟随有人的频道)",
-                example="[123456789]",
-            ),
-            "check_interval": ConfigField(type=int, default=30, description="语音频道自动切换检查间隔 (秒)"),
-            "tts_provider": ConfigField(
-                type=str,
-                default="azure",
-                description="TTS(语音合成)服务提供商",
-                choices=["azure", "ai_hobbyist", "siliconflow"],
-            ),
-            "stt_provider": ConfigField(
-                type=str,
-                default="azure",
-                description="STT(语音识别)服务提供商",
-                choices=["azure", "aliyun", "siliconflow"],
-            ),
-        },
-        "voice.azure": {
-            "subscription_key": ConfigField(type=str, default="", description="Azure 语音服务密钥"),
-            "region": ConfigField(type=str, default="eastasia", description="Azure 服务区域 (如 eastasia, westus)"),
-            "tts_voice": ConfigField(type=str, default="zh-CN-XiaoxiaoNeural", description="TTS 发音人名称"),
-            "stt_language": ConfigField(type=str, default="zh-CN", description="STT 识别语言代码"),
-        },
-        "voice.aliyun": {
-            "access_key_id": ConfigField(type=str, default="", description="阿里云 AccessKey ID"),
-            "access_key_secret": ConfigField(type=str, default="", description="阿里云 AccessKey Secret"),
-            "app_key": ConfigField(type=str, default="", description="智能语音交互 App Key"),
-        },
-        "voice.ai_hobbyist": {
-            "api_base": ConfigField(type=str, default="https://gsv2p.acgnai.top", description="GPT-SoVITS API 地址"),
-            "api_token": ConfigField(type=str, default="", description="API Token (无需则留空)"),
-            "model_name": ConfigField(type=str, default="原神_中文_芙宁娜_ZH", description="模型名称"),
-            "language": ConfigField(type=str, default="中文", description="合成语言"),
-            "emotion": ConfigField(type=str, default="默认", description="情感风格"),
-        },
-        "voice.siliconflow": {
-            "api_key": ConfigField(type=str, default="", description="SiliconFlow API Key"),
-            "api_base": ConfigField(type=str, default="https://api.siliconflow.cn/v1", description="API 基础地址"),
-            "tts_model": ConfigField(type=str, default="fnlp/MOSS-TTSD-v0.5", description="TTS 模型标识"),
-            "tts_voice": ConfigField(type=str, default="fnlp/MOSS-TTSD-v0.5:alex", description="TTS 音色标识"),
-            "stt_model": ConfigField(type=str, default="FunAudioLLM/SenseVoiceSmall", description="STT 模型标识"),
-            "response_format": ConfigField(type=str, default="pcm", description="音频返回格式 (建议 pcm)"),
-            "sample_rate": ConfigField(type=int, default=44100, description="音频采样率"),
-            "speed": ConfigField(type=float, default=1.0, description="语速调节 (0.1 ~ 2.0)"),
-        },
+        # 语音功能配置暂时禁用
+        # "voice": {
+        #     "enabled": ConfigField(type=bool, default=False, description="是否启用语音功能 (需同时开启voice_states权限)"),
+        #     "voice_channel_whitelist": ConfigField(
+        #         type=list,
+        #         default=[],
+        #         description="语音频道白名单 (为空则不限制，自动跟随有人的频道)",
+        #         example="[123456789]",
+        #     ),
+        #     "check_interval": ConfigField(type=int, default=30, description="语音频道自动切换检查间隔 (秒)"),
+        #     "tts_provider": ConfigField(
+        #         type=str,
+        #         default="azure",
+        #         description="TTS(语音合成)服务提供商",
+        #         choices=["azure", "ai_hobbyist", "siliconflow"],
+        #     ),
+        #     "stt_provider": ConfigField(
+        #         type=str,
+        #         default="azure",
+        #         description="STT(语音识别)服务提供商",
+        #         choices=["azure", "aliyun", "siliconflow"],
+        #     ),
+        # },
+        # "voice.azure": {
+        #     "subscription_key": ConfigField(type=str, default="", description="Azure 语音服务密钥"),
+        #     "region": ConfigField(type=str, default="eastasia", description="Azure 服务区域 (如 eastasia, westus)"),
+        #     "tts_voice": ConfigField(type=str, default="zh-CN-XiaoxiaoNeural", description="TTS 发音人名称"),
+        #     "stt_language": ConfigField(type=str, default="zh-CN", description="STT 识别语言代码"),
+        # },
+        # "voice.aliyun": {
+        #     "access_key_id": ConfigField(type=str, default="", description="阿里云 AccessKey ID"),
+        #     "access_key_secret": ConfigField(type=str, default="", description="阿里云 AccessKey Secret"),
+        #     "app_key": ConfigField(type=str, default="", description="智能语音交互 App Key"),
+        # },
+        # "voice.ai_hobbyist": {
+        #     "api_base": ConfigField(type=str, default="https://gsv2p.acgnai.top", description="GPT-SoVITS API 地址"),
+        #     "api_token": ConfigField(type=str, default="", description="API Token (无需则留空)"),
+        #     "model_name": ConfigField(type=str, default="原神_中文_芥宁娜_ZH", description="模型名称"),
+        #     "language": ConfigField(type=str, default="中文", description="合成语言"),
+        #     "emotion": ConfigField(type=str, default="默认", description="情感风格"),
+        # },
+        # "voice.siliconflow": {
+        #     "api_key": ConfigField(type=str, default="", description="SiliconFlow API Key"),
+        #     "api_base": ConfigField(type=str, default="https://api.siliconflow.cn/v1", description="API 基础地址"),
+        #     "tts_model": ConfigField(type=str, default="fnlp/MOSS-TTSD-v0.5", description="TTS 模型标识"),
+        #     "tts_voice": ConfigField(type=str, default="fnlp/MOSS-TTSD-v0.5:alex", description="TTS 音色标识"),
+        #     "stt_model": ConfigField(type=str, default="FunAudioLLM/SenseVoiceSmall", description="STT 模型标识"),
+        #     "response_format": ConfigField(type=str, default="pcm", description="音频返回格式 (建议 pcm)"),
+        #     "sample_rate": ConfigField(type=int, default=44100, description="音频采样率"),
+        #     "speed": ConfigField(type=float, default=1.0, description="语速调节 (0.1 ~ 2.0)"),
+        # },
     }
 
     def __init__(self, *args, **kwargs):
@@ -238,7 +247,7 @@ class DiscordAdapterPlugin(BasePlugin):
         self._adapter_running = False
         global _plugin_instance
         _plugin_instance = self
-        
+
     def get_plugin_components(self) -> List[Tuple[ComponentInfo, Type]]:
         """返回插件组件列表"""
         return [
@@ -251,17 +260,6 @@ class DiscordAdapterPlugin(BasePlugin):
         global _shutdown_event, _adapter_tasks
 
         logger.info("正在初始化 Discord 适配器...")
-
-        # 1. 检查依赖，缺失则询问用户是否安装
-        try:
-            from .dependence_examine import prompt_and_install_dependencies
-
-            deps_ok = await prompt_and_install_dependencies()
-            if not deps_ok:
-                logger.error("依赖未就绪，无法启动 Discord 适配器")
-                return False
-        except Exception as e:
-            logger.warning(f"依赖检查跳过: {e}")
 
         # 2. 检查配置
         token = self.get_config("discord.token", "")
@@ -284,6 +282,7 @@ class DiscordAdapterPlugin(BasePlugin):
 
             # 重置延迟初始化的实例，确保使用新配置
             from .src.mmc_com_layer import reset_router
+
             reset_router()
 
             # 导入适配器模块 (延迟导入，避免循环依赖)
@@ -323,10 +322,10 @@ class DiscordAdapterPlugin(BasePlugin):
             # 等待 Discord 客户端连接
             await asyncio.sleep(2)
 
-            # 传递语音管理器
-            if actual_discord_client.voice_manager:
-                actual_send_handler.voice_manager = actual_discord_client.voice_manager
-                logger.info("语音管理器已连接到发送处理器")
+            # 语音功能暂时禁用
+            # if actual_discord_client.voice_manager:
+            #     actual_send_handler.voice_manager = actual_discord_client.voice_manager
+            #     logger.info("语音管理器已连接到发送处理器")
 
             # 启动后台任务
             background_task_manager.register_connection_monitor(actual_discord_client)
@@ -409,18 +408,18 @@ class DiscordAdapterPlugin(BasePlugin):
     def _inject_config(self):
         """将插件配置注入到适配器模块"""
         from .src.config import inject_plugin_config
-        
+
         # 获取当前插件的完整配置
-        plugin_config = self.config if hasattr(self, 'config') else {}
-        
-        logger.info(f"正在注入插件配置到适配器模块...")
+        plugin_config = self.config if hasattr(self, "config") else {}
+
+        logger.info("正在注入插件配置到适配器模块...")
         logger.debug(f"插件配置内容: {plugin_config}")
-        
+
         # 检查 discord.token 是否在配置中
         discord_cfg = plugin_config.get("discord", {})
         token = discord_cfg.get("token", "")
         logger.debug(f"Discord Token (前10字符): {token[:10] if token and len(token) > 10 else token}...")
-        
+
         inject_plugin_config(plugin_config)
         logger.info("配置注入完成")
 

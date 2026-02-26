@@ -5,7 +5,6 @@
 import asyncio
 import time
 import traceback
-from importlib import import_module
 from typing import Optional
 
 import discord
@@ -22,11 +21,12 @@ from ..logger import logger
 from ..config import global_config, is_user_allowed
 from ..mmc_com_layer import router
 
+
 class DiscordClientManager:
     """Discord 客户端管理器
-    
+
     负责管理 Discord Bot 的连接、事件处理和消息队列
-    
+
     Attributes:
         client (discord.Client | None): Discord 客户端实例
         message_queue (asyncio.Queue): 消息队列
@@ -48,7 +48,7 @@ class DiscordClientManager:
 
     def _setup_client(self):
         """设置 Discord 客户端
-        
+
         配置 Discord 客户端的权限意图并注册事件处理器
         """
         intents = discord.Intents.default()
@@ -99,7 +99,7 @@ class DiscordClientManager:
 
     async def _on_ready(self):
         """Discord 客户端就绪事件处理器
-        
+
         当 Discord 客户端连接成功并准备就绪时调用
         """
         self.is_connected = True
@@ -120,91 +120,45 @@ class DiscordClientManager:
         await self._initialize_voice()
 
     async def _initialize_voice(self):
-        """初始化语音功能"""
-        try:
-            voice_config = global_config.voice
-            if not voice_config.enabled:
-                logger.debug("语音功能未启用")
-                return
-
-            # 动态导入语音模块
-            try:
-                voice_pkg = import_module("src.voice")
-                voice_manager_cls = voice_pkg.VoiceManager
-
-                azure_tts_module = import_module("src.voice.tts.azure_tts")
-                azure_tts_cls = azure_tts_module.AzureTTSProvider
-
-                azure_stt_module = import_module("src.voice.stt.azure_stt")
-                azure_stt_cls = azure_stt_module.AzureSTTProvider
-
-                ai_hobbyist_tts_module = import_module("src.voice.tts.ai_hobbyist_tts")
-                ai_hobbyist_tts_cls = ai_hobbyist_tts_module.AITTSProvider
-
-                aliyun_stt_module = import_module("src.voice.stt.aliyun_stt")
-                aliyun_stt_cls = aliyun_stt_module.AliyunSTTProvider
-
-                siliconflow_tts_module = import_module("src.voice.tts.siliconflow_tts")
-                siliconflow_tts_cls = siliconflow_tts_module.SiliconFlowTTSProvider
-
-                siliconflow_stt_module = import_module("src.voice.stt.siliconflow_stt")
-                siliconflow_stt_cls = siliconflow_stt_module.SiliconFlowSTTProvider
-            except (ImportError, AttributeError) as import_err:
-                logger.warning(f"语音模块导入失败，跳过语音功能: {import_err}")
-                logger.info("提示：如需使用语音功能，请安装依赖")
-                return
-
-            # 初始化 TTS 提供商
-            tts_provider = None
-            try:
-                if voice_config.tts_provider == "azure":
-                    tts_provider = azure_tts_cls(config=voice_config.azure)
-                    logger.debug(f"TTS 提供商已初始化: Azure ({voice_config.azure.tts_voice})")
-                elif voice_config.tts_provider == "ai_hobbyist":
-                    tts_provider = ai_hobbyist_tts_cls(config=voice_config.ai_hobbyist)
-                    logger.debug(
-                        f"TTS 提供商已初始化: AI Hobbyist TTS ({voice_config.ai_hobbyist.model_name})"
-                    )
-                elif voice_config.tts_provider == "siliconflow":
-                    tts_provider = siliconflow_tts_cls(config=voice_config.siliconflow)
-                    logger.debug(f"TTS 提供商已初始化: SiliconFlow ({voice_config.siliconflow.tts_model})")
-            except Exception as e:  # pylint: disable=broad-except
-                logger.warning(f"TTS 提供商初始化失败: {e}")
-
-            # 初始化 STT 提供商
-            stt_provider = None
-            try:
-                if voice_config.stt_provider == "azure":
-                    stt_provider = azure_stt_cls(config=voice_config.azure)
-                    logger.debug(f"STT 提供商已初始化: Azure ({voice_config.azure.stt_language})")
-                elif voice_config.stt_provider == "aliyun":
-                    stt_provider = aliyun_stt_cls(config=voice_config.aliyun)
-                    logger.debug("STT 提供商已初始化: Aliyun")
-                elif voice_config.stt_provider == "siliconflow":
-                    stt_provider = siliconflow_stt_cls(config=voice_config.siliconflow)
-                    logger.debug(f"STT 提供商已初始化: SiliconFlow ({voice_config.siliconflow.stt_model})")
-            except Exception as e:  # pylint: disable=broad-except
-                logger.warning(f"STT 提供商初始化失败: {e}")
-
-            # 创建语音管理器
-            self.voice_manager = voice_manager_cls(
-                bot=self.client,
-                config=voice_config,
-                tts_provider=tts_provider,
-                stt_provider=stt_provider
-            )
-
-            if stt_provider:
-                self.voice_manager.set_stt_callback(self._handle_stt_result)
-
-            # 启动语音管理器
-            await self.voice_manager.start()
-            logger.info("语音功能已启动")
-
-        except ImportError as e:
-            logger.warning(f"导入语音模块失败，跳过语音功能: {e}")
-        except Exception as e:  # pylint: disable=broad-except
-            logger.error(f"初始化语音功能失败: {e}")
+        """初始化语音功能（暂时禁用）"""
+        # 语音功能暂时禁用，跳过初始化
+        logger.info("语音功能模块已暂时禁用，跳过初始化")
+        return
+        # try:
+        #     voice_config = global_config.voice
+        #     if not voice_config.enabled:
+        #         logger.debug("语音功能未启用")
+        #         return
+        #
+        #     # 动态导入语音模块
+        #     try:
+        #         voice_pkg = import_module("src.voice")
+        #         voice_manager_cls = voice_pkg.VoiceManager
+        #         azure_tts_module = import_module("src.voice.tts.azure_tts")
+        #         azure_tts_cls = azure_tts_module.AzureTTSProvider
+        #         azure_stt_module = import_module("src.voice.stt.azure_stt")
+        #         azure_stt_cls = azure_stt_module.AzureSTTProvider
+        #         ai_hobbyist_tts_module = import_module("src.voice.tts.ai_hobbyist_tts")
+        #         ai_hobbyist_tts_cls = ai_hobbyist_tts_module.AITTSProvider
+        #         aliyun_stt_module = import_module("src.voice.stt.aliyun_stt")
+        #         aliyun_stt_cls = aliyun_stt_module.AliyunSTTProvider
+        #         siliconflow_tts_module = import_module("src.voice.tts.siliconflow_tts")
+        #         siliconflow_tts_cls = siliconflow_tts_module.SiliconFlowTTSProvider
+        #         siliconflow_stt_module = import_module("src.voice.stt.siliconflow_stt")
+        #         siliconflow_stt_cls = siliconflow_stt_module.SiliconFlowSTTProvider
+        #     except (ImportError, AttributeError) as import_err:
+        #         logger.warning(f"语音模块导入失败，跳过语音功能: {import_err}")
+        #         return
+        #
+        #     tts_provider = None
+        #     stt_provider = None
+        #     # ... (TTS/STT 初始化代码省略)
+        #
+        #     self.voice_manager = voice_manager_cls(...)
+        #     await self.voice_manager.start()
+        #     logger.info("语音功能已启动")
+        # except Exception as e:
+        #     logger.error(f"初始化语音功能失败: {e}")
 
     async def _handle_stt_result(self, member: discord.Member, text: str) -> None:
         """将语音识别结果转发到 MaiBot Core"""
@@ -265,14 +219,16 @@ class DiscordClientManager:
 
     async def _on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
-        ):
-        """语音状态更新事件处理器"""
-        if self.voice_manager:
-            await self.voice_manager.on_voice_state_update(member, before, after)
+    ):
+        """语音状态更新事件处理器（暂时禁用）"""
+        # 语音功能暂时禁用
+        # if self.voice_manager:
+        #     await self.voice_manager.on_voice_state_update(member, before, after)
+        pass
 
     async def _on_error(self, event: str, *args, **kwargs):
         """Discord 客户端错误事件处理器
-        
+
         Args:
             event: 发生错误的事件名称
             *args: 事件参数
@@ -292,16 +248,15 @@ class DiscordClientManager:
 
     async def _on_message(self, message: discord.Message):
         """Discord 消息事件处理器
-        
+
         处理接收到的 Discord 消息，进行基本过滤后放入消息队列
-        
+
         Args:
             message: Discord 消息对象
         """
         try:
             # 详细的消息来源信息
-            channel_info = (f"频道: {message.channel.name}"
-                           if hasattr(message.channel, 'name') else "私信频道")
+            channel_info = f"频道: {message.channel.name}" if hasattr(message.channel, "name") else "私信频道"
             guild_info = f"服务器: {message.guild.name}" if message.guild else "私信"
 
             logger.debug("收到消息事件:")
@@ -327,10 +282,7 @@ class DiscordClientManager:
             channel_id = message.channel.id
 
             # 检查是否为子区消息
-            is_thread_message = (
-                hasattr(message.channel, 'parent')
-                and message.channel.parent is not None
-            )
+            is_thread_message = hasattr(message.channel, "parent") and message.channel.parent is not None
             thread_id = None
 
             if is_thread_message:
@@ -382,7 +334,6 @@ class DiscordClientManager:
             except Exception as e:  # pylint: disable=broad-except
                 logger.warning(f"关闭旧客户端时出错: {e}")
 
-
         # 重新创建客户端
         self._setup_client()
 
@@ -393,13 +344,13 @@ class DiscordClientManager:
 
     async def start(self):
         """启动 Discord 客户端
-        
+
         Raises:
             Exception: 当启动失败时抛出异常
         """
         # 获取重试配置
         retry_config = global_config.discord.retry
-        retry_delay = retry_config.get('retry_delay', 5)
+        retry_delay = retry_config.get("retry_delay", 5)
 
         logger.info(f"正在启动 Discord 客户端... (重试间隔: {retry_delay}s)")
 
@@ -464,10 +415,10 @@ class DiscordClientManager:
         """停止 Discord 客户端"""
         self.is_shutting_down = True
 
-        # 停止语音管理器
-        if self.voice_manager:
-            await self.voice_manager.close()
-            logger.info("语音管理器已关闭")
+        # 语音管理器暂时禁用
+        # if self.voice_manager:
+        #     await self.voice_manager.close()
+        #     logger.info("语音管理器已关闭")
 
         # 关闭Discord客户端
         if self.client and not self.client.is_closed():
@@ -476,7 +427,7 @@ class DiscordClientManager:
 
     async def force_reconnect(self):
         """强制重连Discord客户端
-        
+
         重连后会自动重新注册所有事件处理器。
         """
         if self.is_shutting_down:
@@ -534,7 +485,7 @@ class DiscordClientManager:
         try:
             # 获取重试配置
             retry_config = global_config.discord.retry
-            retry_delay = retry_config.get('retry_delay', 5)
+            retry_delay = retry_config.get("retry_delay", 5)
 
             attempt = 0
             while not self.is_shutting_down:
@@ -582,10 +533,10 @@ class DiscordClientManager:
 
     async def get_channel(self, channel_id: int) -> discord.abc.Messageable | None:
         """获取频道对象
-        
+
         Args:
             channel_id: 频道 ID
-            
+
         Returns:
             discord.abc.Messageable | None: 频道对象，获取失败时返回 None
         """
@@ -595,10 +546,10 @@ class DiscordClientManager:
 
     async def get_user(self, user_id: int) -> discord.User | None:
         """获取用户对象
-        
+
         Args:
             user_id: 用户 ID
-            
+
         Returns:
             discord.User | None: 用户对象，获取失败时返回 None
         """
@@ -613,7 +564,7 @@ _discord_client_instance: Optional[DiscordClientManager] = None
 
 def get_discord_client() -> DiscordClientManager:
     """获取 Discord 客户端单例（延迟初始化）
-    
+
     Returns:
         DiscordClientManager: Discord 客户端管理器实例
     """
@@ -627,12 +578,9 @@ def get_discord_client() -> DiscordClientManager:
 # 为了向后兼容，保留 discord_client 变量名（但改为属性访问）
 class _DiscordClientProxy:
     """Discord 客户端代理，用于延迟初始化"""
-    
+
     def __getattr__(self, name):
         return getattr(get_discord_client(), name)
-    
-    def __setattr__(self, name, value):
-        setattr(get_discord_client(), name, value)
 
 
 discord_client = _DiscordClientProxy()
