@@ -1,328 +1,439 @@
-# MaiBot Discord Adapter 安装配置指南
+# MaiBot Discord Adapter 安装与配置指南
 
-本文档详细说明如何安装和配置 MaiBot Discord Adapter。
+这份文档以当前 `maibot-discord-adapter` 的实际实现为准，面向 MaiBot 新插件体系。
 
----
+适配器本身是一个基于 MaiBot Plugin SDK 2.x 的 `MessageGateway` 平台接入插件，不再使用旧版 `BasePlugin` / `register_plugin` / `maibot_server` 直连配置方式。
 
-## 📋 目录
+## 1. 适用范围
 
-1. [环境准备](#环境准备)
-2. [依赖安装](#依赖安装)
-3. [创建 Discord Bot](#创建-discord-bot)
-4. [Bot 邀请到服务器](#bot-邀请到服务器)
-5. [配置文件设置](#配置文件设置)
-6. [运行程序](#运行程序)
-7. [常见问题](#常见问题)
+当前文档对应的是：
 
----
+- 插件目录：`MaiBot/plugins/maibot-discord-adapter`
+- 配置模型：[`config.py`](../config.py)
+- 插件入口：[`plugin.py`](../plugin.py)
 
-## 环境准备
+如果你看到别的旧文档里还在写这些内容，请以本文件和 `config.py` 为准：
 
-### 一、获取项目文件
+- `[maibot_server]`
+- `discord.intents.messages`
+- Azure / AI Hobbyist 语音配置
+- 仅支持环境变量注入 Token
 
-通过 git clone 将项目克隆到本地：
+这些都不是当前实现的主路径了。
 
-```bash
-git clone https://github.com/2829798842/MaiBot-Discord-Adapter.git
-cd MaiBot-Discord-Adapter
-```
+## 2. 安装前提
 
-### 二、Python 环境配置
+使用这个适配器前，请先确认：
 
-#### 方法 1：使用 uv (推荐)
+- MaiBot 主程序已经可以正常启动
+- 插件目录已经放在 `MaiBot/plugins/maibot-discord-adapter`
+- 运行环境已安装本插件依赖
+- Discord Bot 已在 Developer Portal 创建完成
 
-首先安装 uv 包管理器：
+当前插件元数据声明的核心 Python 依赖包括：
 
-```bash
-# 使用 pip 安装 uv
-pip install uv
-```
+- `discord.py >= 2.3.0`
+- `discord-ext-voice-recv >= 0.4.1a139`
+- `PyNaCl >= 1.5.0`
 
-#### 方法 2：传统虚拟环境
+如果你启用语音功能，还需要本机可用的 `ffmpeg`。
 
-请事先安装 **Python 3.10 或更高版本** 并添加到系统变量
+## 3. 创建 Discord Bot
 
+### 3.1 创建应用
 
-```bash
-python -m venv venv
-.\venv\Scripts\activate  # Windows
-source venv/bin/activate  # Linux/Mac
-```
-
----
-
-## 依赖安装
-
-### 使用 uv 安装 (推荐)
-
-```bash
-uv venv
-uv pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple --upgrade
-```
-
-### 使用 pip 安装 (传统方式)
-
-```bash
-pip install -i https://mirrors.aliyun.com/pypi/simple -r requirements.txt --upgrade
-```
-
----
-
-## 创建 Discord Bot
-
-### 第一步：访问开发者平台
-
-登录 [Discord Developer Portal](https://discord.com/developers)
-
-### 第二步：创建应用
-
-1. 点击 **New Application**
-2. 输入你的 Bot 名称（可以任意命名）
+1. 打开 <https://discord.com/developers/applications>
+2. 点击 `New Application`
+3. 输入应用名称并创建
 
 ![创建应用](../image/1.png)
 
-### 第三步：配置 Bot
+### 3.2 创建 Bot 并获取 Token
 
-1. 进入应用后，可以上传头像等基本信息
+1. 在应用页面进入 `Bot`
+2. 创建 Bot 用户
+3. 复制 Bot Token
+
+应用基础信息页示意：
 
 ![应用设置](../image/2.png)
 
-2. 找到侧边栏的 **Bot** 选项
+Bot 配置入口示意：
 
-![Bot设置](../image/3.png)
+![Bot 设置入口](../image/3.png)
 
-3. 获取 Bot Token（**务必保存好**，只显示一次）
-   - 如果丢失可以点击 **Reset Token** 重新生成
+Token 获取位置示意：
 
-![Token](../image/4.png)
+![Token 获取](../image/4.png)
 
-### 第四步：启用必要的 Intents
+当前适配器的 Token 主入口是插件配置里的：
 
-在 Bot 设置页面，启用以下权限意图：
+```toml
+[connection]
+token = "YOUR_DISCORD_BOT_TOKEN"
+```
 
-#### Presence Intent
-> Required for your bot to receive Presence Update events.
+不是旧版文档里的环境变量唯一入口，也不是旧版 `[discord] token = ...` 结构。
 
-用于获取 Bot 的在线状态等信息
+### 3.3 打开必要 Intents
 
-#### Server Members Intent
-> Required for your bot to receive events listed under GUILD_MEMBERS.
+至少建议检查这些权限项：
 
-用于接收服务器成员相关事件
+- `MESSAGE CONTENT INTENT`
+- `SERVER MEMBERS INTENT`
+- `PRESENCE INTENT`
 
-#### Message Content Intent **必须启用**
-> Required for your bot to receive message content in most messages.
+其中最关键的是 `MESSAGE CONTENT INTENT`。如果不开，Bot 往往能收到事件但拿不到消息正文。
 
-**这是让 Bot 能够读取消息内容的必要权限，务必勾选！**
+插件内部对应的配置字段是：
 
----
+```toml
+[connection]
+intent_messages = true
+intent_guilds = true
+intent_dm_messages = true
+intent_message_content = true
+intent_voice_states = true
+```
 
-## Bot 邀请到服务器
+这里的语义是：
 
-### 第一步：进入 OAuth2 设置
+- `intent_messages`：Guild 消息事件
+- `intent_guilds`：Guild 基本信息
+- `intent_dm_messages`：DM 消息事件
+- `intent_message_content`：消息正文读取
+- `intent_voice_states`：语音状态事件；如果你要用语音频道自动进出或 STT，就必须开启
 
-找到侧边栏的 **OAuth2** → **URL Generator**
+## 4. 邀请 Bot 进入服务器
 
-![OAuth2](../image/5.png)
+OAuth2 页面示意：
 
-### 第二步：选择权限范围
+![OAuth2 页面](../image/5.png)
 
-1. 在 **SCOPES** 中勾选 `bot`
+勾选 `bot` scope 示例：
 
-![选择bot](../image/6.png)
+![选择 bot scope](../image/6.png)
 
-2. 在 **BOT PERMISSIONS** 中选择权限
+在 Discord Developer Portal 中：
 
-![选择权限](../image/7.png)
+1. 打开 `OAuth2` -> `URL Generator`
+2. 勾选 `bot`
+3. 选择需要的权限
 
-**推荐配置**：
-- **简单方式**：直接勾选 `Administrator`（管理员权限）
-- **精细控制**：根据需要逐个选择具体权限
+建议至少确保 Bot 具备这些能力：
 
-### 第三步：邀请 Bot
+- 查看频道
+- 发送消息
+- 读取消息历史
+- 添加表情回应
+- 附加文件
+- 嵌入链接
+- 连接语音频道
+- 讲话
 
-1. 复制页面底部生成的 URL（GENERATED URL）
+权限勾选示意：
 
-![生成的URL](../image/8.png)
+![权限选择](../image/7.png)
 
-2. 在浏览器中打开该链接
-3. 选择要添加 Bot 的服务器
-4. 点击 **继续** 完成授权
+如果你要使用线程、回复、Reaction、语音等功能，权限最好一次配齐，否则排障会比较绕。
+
+生成邀请链接示意：
+
+![生成邀请链接](../image/8.png)
+
+最终邀请界面示意：
 
 ![邀请界面](../image/9.png)
 
----
+## 5. 插件配置结构
 
-## 配置文件设置
+当前插件配置由 `config.py` 中的 `DiscordPluginSettings` 定义，主要分为以下几块。
 
-### 第一步：创建配置文件
+### 5.1 `plugin`
 
-插件化后变为自动生成
+插件基础开关和配置版本：
 
-### 第二步：编辑配置文件
-
-打开 `config.toml` 或webui并修改以下内容：
-
-由于插件注释解析不佳，因此保留旧版配置详情，具体可进行字符查找
 ```toml
-[inner]
-version = "1.0.0" # 版本号
-# 请勿修改版本号，除非你知道自己在做什么
-
-[discord] # Discord Bot 设置
-token = "your_discord_bot_token_here"  # ← 填入你的 Bot Token
-
-# Discord 权限意图设置
-[discord.intents]
-messages = true
-guilds = true
-dm_messages = true
-message_content = true  # 必须为 true
-
-[chat]
-# 获取 ID 的方法：
-# 1. 开启 Discord 开发者模式：用户设置 → 高级 → 开发者模式
-# 2. 服务器 ID：右键点击服务器名称 → 复制服务器 ID
-# 3. 频道 ID：右键点击频道名称 → 复制频道 ID
-# 4. 用户 ID：右键点击用户头像 → 复制用户 ID
-
-guild_list_type = "blacklist" # 服务器名单类型：whitelist, blacklist
-guild_list = []               # 服务器 ID 列表
-# whitelist：只有列表中的服务器可以使用 Bot
-# blacklist：列表中的服务器无法使用 Bot
-
-channel_list_type = "blacklist" # 频道名单类型
-channel_list = []               # 频道 ID 列表
-
-user_list_type = "blacklist"  # 用户名单类型
-user_list = []                # 用户 ID 列表
-
-[maibot_server] # 连接 MaiBot Core 的服务设置
-host = "127.0.0.1" # MaiBot Core 主机地址
-port = 8000        # MaiBot Core 端口
-platform_name = "discord_bot_instance_1" # 平台标识符（多实例时请使用不同名称）
-
-[debug]
-level = "INFO" # 日志等级（DEBUG, INFO, WARNING, ERROR, CRITICAL）
-log_file = "logs/discord_adapter.log" # 日志文件路径
+[plugin]
+enabled = true
+config_version = "0.2.0"
 ```
 
-### 黑白名单说明
+### 5.2 `connection`
 
-默认配置为黑名单模式且列表为空，意味着：
-- ✅ Bot 可以在所有服务器的所有频道响应所有用户
-- ⚠️ 如需限制，请添加对应 ID 到黑名单，或改用白名单模式
+Discord 连接与 intents：
 
-### 语音功能配置（可选）
-
-如需启用语音功能，请参考 [语音配置指南](voice_config_guide.md)
-
----
-
-## 运行程序 
-
-**注意**新版适配器已经随本体MaiCore一起启动
-
-### 成功运行的标志
-
-如果看到以下日志，说明启动成功：
-
-```
-INFO - Discord Adapter 已启动
-INFO - 已连接到 Discord
-INFO - Bot 已准备就绪
+```toml
+[connection]
+token = "YOUR_DISCORD_BOT_TOKEN"
+intent_messages = true
+intent_guilds = true
+intent_dm_messages = true
+intent_message_content = true
+intent_voice_states = true
+retry_delay = 5
+connection_check_interval = 30
 ```
 
----
+字段说明：
 
-## 常见问题
+- `token`：Discord Bot Token
+- `retry_delay`：断线重连间隔，单位秒
+- `connection_check_interval`：连接健康检查间隔，单位秒
 
-### Q1: Cannot connect to host discord.com:443 ssl:default
+### 5.3 `chat`
 
-**原因**：网络代理配置问题
-
-**解决方案**：
-强烈建议打开您所使用vpn的tun模式
-如果还不行这里是一些相关解决issue
-- [discord.py  issue](https://github.com/Rapptz/discord.py/issues/5880)
-- [discord.py  issue](https://github.com/Rapptz/discord.py/issues/4159)
-- 
-同时跟您梯子节点质量等也有关
-
-##### 注:作者本人弃用**mihono内核(clashverge or clashparty)**转用**singbox内核**后再未发现类似问题
-
-
-### Q2: Bot 收不到消息
-
-**检查清单**：
-
-1.  确认已启用 `Message Content Intent`
-2.  检查 `config.toml` 中 `message_content = true`
-3.  确认 Bot 已成功加入服务器
-4.  检查频道权限（Bot 需要"查看频道"和"发送消息"权限）
-5.  查看日志中是否有错误信息
-
-### Q3: Bot Token 无效
-
-**解决方法**：
-1. 返回 Discord Developer Portal
-2. 点击 **Reset Token** 重新生成
-3. 更新 `config.toml` 中的 token
-
-### Q4: 如何获取 Bot ID？
-
-**方法 1**：开启开发者模式后，右键点击 Bot 头像 → 复制用户 ID
-
-**方法 2**：在 Discord Developer Portal 的 General Information 页面查看 Application ID
-
-### Q5: 权限不足无法发送消息
-
-**解决方法**：
-1. 检查 Bot 在服务器中的角色权限
-2. 确保 Bot 有"发送消息"权限
-3. 检查特定频道的权限覆盖设置
-
-### Q6: 如何更新到最新版本？
-
-```bash
-git pull origin main
-pip install -r requirements.txt --upgrade
-```
-
-## 
-
-### 子区（Thread）配置
+控制 guild / channel / thread / user 四层过滤与线程行为：
 
 ```toml
 [chat]
-allow_thread_interaction = true  # 是否允许子区交互
-inherit_channel_permissions = true  # 子区是否继承父频道权限
-inherit_channel_memory = true  # 子区是否继承父频道记忆
+guild_list_type = "blacklist"
+guild_list = []
+channel_list_type = "blacklist"
+channel_list = []
+thread_list_type = "blacklist"
+thread_list = []
+user_list_type = "blacklist"
+user_list = []
+allow_thread_interaction = true
+inherit_channel_permissions = true
+inherit_channel_memory = true
 ```
 
-**说明**：
-- `inherit_channel_memory = true`：子区与父频道共享聊天记录和上下文
-- `inherit_channel_permissions = true`：子区使用父频道的权限配置
+字段说明：
 
-### Discord 连接重试设置
+- `guild_list_type` / `channel_list_type` / `thread_list_type` / `user_list_type`
+  - 可选值：`whitelist` 或 `blacklist`
+- 对应的 `*_list`
+  - 填 Discord 的真实 ID 字符串
+- `allow_thread_interaction`
+  - 是否处理线程消息
+- `inherit_channel_permissions`
+  - 线程是否沿用父频道的过滤判定
+- `inherit_channel_memory`
+  - 线程上下文是否回落到父频道会话
+
+### 5.4 `platform`
 
 ```toml
-[discord.retry]
-retry_delay = 5                  # 重试间隔（秒）
-connection_check_interval = 30  # 连接状态检查间隔（秒）
+[platform]
+platform_name = "discord"
 ```
 
----
+一般保持默认即可。除非你明确知道自己在做多平台实例区分，否则不要随便改。
 
-## 获取帮助
+### 5.5 `filters`
 
-如遇到问题：
+```toml
+[filters]
+ignore_self_message = true
+ignore_bot_message = true
+```
 
-1.  查看本文档和相关文档
-2.  检查日志文件 `logs/discord_adapter.log`
-3.  加入 Discord 服务器求助：[![Discord](https://img.shields.io/badge/Discord-MaiBot-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/ue4xJw7s)
-4.  提交 Issue：[GitHub Issues](https://github.com/2829798842/MaiBot-Discord-Adapter/issues)
+字段说明：
 
----
+- `ignore_self_message`
+  - 忽略 Bot 自己发出的消息，避免回环
+- `ignore_bot_message`
+  - 忽略其他 Bot 的消息，减少噪音
 
-**祝你使用愉快！** 
+### 5.6 `voice`
+
+```toml
+[voice]
+enabled = false
+voice_mode = "auto"
+fixed_channel_id = ""
+auto_channel_list = []
+idle_timeout_sec = 300
+tts_provider = "siliconflow"
+stt_provider = "siliconflow_sensevoice"
+enable_vad = true
+vad_threshold_db = -50
+vad_deactivation_delay_ms = 500
+send_text_in_voice = false
+```
+
+字段说明：
+
+- `enabled`
+  - 语音总开关；为 `false` 时插件不会创建语音管理器，也不会尝试加入语音频道
+- `voice_mode`
+  - `fixed`：固定语音频道
+  - `auto`：在候选频道中自动进出
+- `fixed_channel_id`
+  - `voice_mode = "fixed"` 时使用，必须填语音频道 ID，不是频道分类 ID
+- `auto_channel_list`
+  - `voice_mode = "auto"` 时使用
+- `send_text_in_voice`
+  - 播放 TTS 时是否也在文本侧补发文字
+
+更细的语音配置见 [voice_config_guide.md](./voice_config_guide.md)。
+
+## 6. 最小可运行配置示例
+
+如果你暂时只想让 Bot 先跑起来，可以先用这套最小配置：
+
+```toml
+[plugin]
+enabled = true
+config_version = "0.2.0"
+
+[connection]
+token = "YOUR_DISCORD_BOT_TOKEN"
+intent_messages = true
+intent_guilds = true
+intent_dm_messages = true
+intent_message_content = true
+intent_voice_states = true
+retry_delay = 5
+connection_check_interval = 30
+
+[chat]
+guild_list_type = "blacklist"
+guild_list = []
+channel_list_type = "blacklist"
+channel_list = []
+thread_list_type = "blacklist"
+thread_list = []
+user_list_type = "blacklist"
+user_list = []
+allow_thread_interaction = true
+inherit_channel_permissions = true
+inherit_channel_memory = true
+
+[platform]
+platform_name = "discord"
+
+[filters]
+ignore_self_message = true
+ignore_bot_message = true
+
+[voice]
+enabled = false
+voice_mode = "auto"
+fixed_channel_id = ""
+auto_channel_list = []
+idle_timeout_sec = 300
+tts_provider = "siliconflow"
+stt_provider = "siliconflow_sensevoice"
+enable_vad = true
+vad_threshold_db = -50
+vad_deactivation_delay_ms = 500
+send_text_in_voice = false
+```
+
+## 7. WebUI 与自动生成配置
+
+当前插件已经接入 `PluginConfigBase + Field(...)` 配置模型，因此有两个重要结论：
+
+- WebUI 配置页是根据 `config.py` 的 schema 生成的
+- 自动生成的配置文件也以 `config.py` 的字段定义为准
+
+所以如果你在 WebUI 中看不到某个字段，或者自动生成的配置没有某项，第一优先级应该检查：
+
+1. `config.py` 里有没有这个字段
+2. 字段是不是被写到了错误的层级
+3. 字段的 `json_schema_extra` / 模型定义是否异常
+4. 插件是否因为导入错误导致 schema 解析失败
+
+如果 Host 日志里出现类似下面的错误：
+
+```text
+配置 Schema 解析失败，将回退到弱推断
+插件配置解析请求失败
+```
+
+那么 WebUI 展示异常通常不是前端单独的问题，而是插件导入或 schema 生成阶段已经失败了。
+
+## 8. 已知实现边界
+
+当前适配器已经支持：
+
+- Guild / DM / Thread 入站
+- 文本、图片、Reply、Reaction
+- 基础语音 TTS / STT
+- 线程上下文路由
+
+但下面这些点还不是完全体：
+
+- 附件支持不完全对称
+  - 当前真正稳定处理的是文本、图片、语音
+  - `file` / `video` 仍然更偏占位表达
+- Reply 入站会同时保留
+  - 结构化 `reply`
+  - 一段额外的回复摘要文本
+- 还没有完整覆盖
+  - 消息编辑 / 删除回流
+  - Slash Commands
+  - Buttons / Modals
+  - 完整 Embed 映射
+
+## 9. 常见问题
+
+### 9.1 能连上 Discord，但收不到正文
+
+优先检查：
+
+- Developer Portal 中是否启用了 `MESSAGE CONTENT INTENT`
+- 插件配置中 `connection.intent_message_content` 是否为 `true`
+- Bot 是否有目标频道读取权限
+
+### 9.2 WebUI 里没有 Token 输入框
+
+优先检查：
+
+- `config.py` 里的 `connection.token` 是否存在
+- 插件是否成功加载
+- Host 是否在日志中提示 schema 解析失败
+
+### 9.3 自动生成配置没有更新
+
+通常说明下面至少有一个问题：
+
+- schema 解析失败
+- 插件没有成功加载
+- 配置模型字段定义不合法
+- WebUI 读取回退到了旧磁盘内容
+
+### 9.4 DM 发不出去
+
+优先检查：
+
+- `intent_dm_messages` 是否启用
+- 路由信息里是否带到了真实的目标用户 ID
+- Bot 是否能正常创建或获取 DM Channel
+
+### 9.5 回复消息表现奇怪
+
+这类问题要拆成两种看：
+
+- 如果是“引用关系没建立成功”
+  - 重点看结构化 `reply`、原消息 ID 回写、目标频道解析
+- 如果是“模型理解时把回复内容说得很啰嗦”
+  - 重点看回复摘要文本是否过多、是否和结构化 `reply` 重复
+
+## 10. 排障建议
+
+如果你正在排 Discord 适配器问题，日志里最值得关注的是这几类信息：
+
+- 插件是否成功加载
+- Discord 客户端是否 ready
+- 网关是否上报 `ready=true`
+- 入站消息是否成功转换为 Host MessageDict
+- 出站路由是否拿到了正确的 `target_group_id` / `target_user_id`
+- 发送后是否拿到了真实 Discord `message.id`
+
+这几项一旦断一环，表现通常就是：
+
+- WebUI 配置异常
+- 无法解析目标频道
+- Reply 无法正确关联
+- DM 发送失败
+
+## 11. 相关文件
+
+- [README.md](../README.md)
+- [voice_config_guide.md](./voice_config_guide.md)
+- [config.py](../config.py)
+- [plugin.py](../plugin.py)

@@ -1,329 +1,479 @@
-"""模块名称：Discord 消息处理器
-主要功能：处理来自 Discord 的消息并转换为 MaiBot 标准格式
+"""Discord 入站消息编解码器。
+
+将 Discord 消息/事件转换为 Host 侧 message_dict 结构。
 """
 
 import base64
 import re
 import time
 import traceback
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+
 import discord
-from maim_message import BaseMessageInfo, UserInfo, GroupInfo, FormatInfo, MessageBase, Seg
-from ..logger import logger
-from ..config import global_config
-from .emoji_mapping import get_emoji_meaning, format_reaction_for_ai
-from ..recv_handler.discord_client import discord_client
+from maim_message import BaseMessageInfo, FormatInfo, GroupInfo, MessageBase, Seg, UserInfo
+
+from .emoji_mapping import format_reaction_for_ai, get_emoji_meaning
+
 
 class DiscordMessageHandler:
-    """Discord 消息处理器
-    
-    负责将 Discord 消息转换为 MaiBot 标准格式
-    
-    Attributes:
-        router: MaiBot 消息路由器（在 main.py 中设置）
-        send_handler: Discord 发送处理器引用，用于更新上下文映射
+    """Discord 入站消息处理器。
+
+    将 Discord 消息转换为 MaiBot Host 侧的 message_dict 结构。
+    不直接与 gateway 交互，仅负责转换。
     """
 
-    router: any
-    send_handler: any
+    def __init__(self, logger: Any, platform_name: str, chat_config: Any) -> None:
+        """创建处理器并保存平台名与聊天相关配置。
 
-    def __init__(self):
-        """初始化消息处理器"""
-        self.router = None
-        self.send_handler = None  # 将在 main.py 中设置
-
-    async def handle_discord_message(self, message: discord.Message):
-        """处理 Discord 消息
-        
         Args:
-            message: Discord 消息对象
+            logger: 日志记录器。
+            platform_name: 写入 `MessageBase` 等平台字段的平台标识。
+            chat_config: 聊天/子区记忆继承等行为的配置对象。
+        """
+        self._logger = logger
+        self._platform_name = platform_name
+        self._chat_config = chat_config
+
+    def update_config(self, platform_name: str, chat_config: Any) -> None:
+        """热更新平台名与聊天配置（不改变已缓存的其他状态）。
+
+        Args:
+            platform_name: 新的平台标识。
+            chat_config: 新的聊天配置对象。
+        """
+        self._platform_name = platform_name
+        self._chat_config = chat_config
+
+    async def handle_discord_message(self, message: discord.Message) -> Optional[Dict[str, Any]]:
+        """将 Discord 消息转换为 Host 侧 `message_dict`。
+
+        Args:
+            message: Discord 入站 `Message` 对象。
+
+        Returns:
+            转换成功返回字典；异常或无可序列化内容时返回 None。
         """
         try:
-            logger.debug("开始处理 Discord 消息转换:")
-            logger.debug(f"  原始消息ID: {message.id}")
-            channel_name = message.channel.name if hasattr(message.channel, 'name') else 'DM'
-            logger.debug(f"  来源频道: {channel_name} (ID: {message.channel.id})")
-            guild_name = message.guild.name if message.guild else '私信'
-            guild_id = message.guild.id if message.guild else 'N/A'
-            logger.debug(f"  来源服务器: {guild_name} (ID: {guild_id})")
-
-            # 转换消息格式
             maim_message = await self._convert_discord_to_maim(message)
-            if not maim_message:
-                logger.warning("消息转换失败，跳过该消息")
+            if maim_message is None:
+                return None
+            return self.build_host_message_dict(maim_message)
+        except Exception as exc:
+            self._logger.error(f"处理 Discord 消息时发生错误: {exc}")
+            self._logger.debug(traceback.format_exc())
+            return None
+
+    async def handle_reaction_event(
+        self,
+        event_type: str,
+        payload: discord.RawReactionActionEvent,
+        client: discord.Client,
+    ) -> Optional[Dict[str, Any]]:
+        """将 Reaction 原始事件转换为 Host 侧 `message_dict`。
+
+        Args:
+            event_type: 事件类型（如 reaction_add / reaction_remove）。
+            payload: Discord `RawReactionActionEvent` 载荷。
+            client: 当前 Bot 客户端，用于拉取用户与频道信息。
+
+        Returns:
+            转换成功返回字典；异常或无法构建时返回 None。
+        """
+        try:
+            maim_message = await self._convert_reaction_to_maim(event_type, payload, client)
+            if maim_message is None:
+                return None
+            return self.build_host_message_dict(maim_message)
+        except Exception as exc:
+            self._logger.error(f"转换 {event_type} 事件时发生错误: {exc}")
+            self._logger.debug(traceback.format_exc())
+            return None
+
+    def build_host_message_dict(self, maim_message: MessageBase) -> Dict[str, Any]:
+        """将 `MessageBase` 转换为 Host 运行时要求的 `message_dict` 结构。"""
+        message_info = maim_message.message_info
+        if not isinstance(message_info, BaseMessageInfo):
+            raise ValueError("MessageBase 缺少有效的 message_info")
+
+        user_info = getattr(message_info, "user_info", None)
+        user_id = str(getattr(user_info, "user_id", "") or "").strip()
+        user_nickname = str(getattr(user_info, "user_nickname", "") or user_id).strip() or user_id
+        user_cardname = getattr(user_info, "user_cardname", None)
+        if not user_id:
+            raise ValueError("MessageBase 缺少有效的 user_info.user_id")
+
+        raw_message = self._serialize_message_segment(getattr(maim_message, "message_segment", None))
+        if not raw_message:
+            raw_text = self._normalize_text(getattr(maim_message, "raw_message", None))
+            if raw_text:
+                raw_message = [{"type": "text", "data": raw_text}]
+
+        traits = self._analyze_segment_tree(getattr(maim_message, "message_segment", None))
+        processed_plain_text = self._build_processed_plain_text(raw_message)
+        if not processed_plain_text:
+            processed_plain_text = self._normalize_text(getattr(maim_message, "raw_message", None))
+
+        message_id = str(getattr(message_info, "message_id", "") or "").strip()
+        if not message_id:
+            message_id = f"discord-{int(time.time() * 1000)}"
+
+        timestamp_value = getattr(message_info, "time", time.time())
+        try:
+            timestamp = str(float(timestamp_value))
+        except (TypeError, ValueError):
+            timestamp = str(float(time.time()))
+
+        existing_additional_config = getattr(message_info, "additional_config", None)
+        additional_config: Dict[str, Any] = (
+            dict(existing_additional_config)
+            if isinstance(existing_additional_config, dict)
+            else {}
+        )
+
+        message_info_dict: Dict[str, Any] = {
+            "user_info": {
+                "user_id": user_id,
+                "user_nickname": user_nickname,
+                "user_cardname": str(user_cardname) if user_cardname else None,
+            },
+            "additional_config": additional_config,
+        }
+
+        group_info = getattr(message_info, "group_info", None)
+        if isinstance(group_info, GroupInfo):
+            group_id = str(getattr(group_info, "group_id", "") or "").strip()
+            group_name = str(getattr(group_info, "group_name", "") or group_id).strip() or group_id
+            if group_id:
+                message_info_dict["group_info"] = {
+                    "group_id": group_id,
+                    "group_name": group_name,
+                }
+                additional_config["platform_io_target_group_id"] = group_id
+        else:
+            additional_config["platform_io_target_user_id"] = user_id
+
+        message_dict: Dict[str, Any] = {
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "platform": str(getattr(message_info, "platform", "") or self._platform_name),
+            "message_info": message_info_dict,
+            "raw_message": raw_message,
+            "is_mentioned": traits["is_mentioned"],
+            "is_at": traits["is_at"],
+            "is_emoji": traits["is_emoji"],
+            "is_picture": traits["is_picture"],
+            "is_command": bool(processed_plain_text) and processed_plain_text.lstrip().startswith("/"),
+            "is_notify": False,
+            "session_id": "",
+            "processed_plain_text": processed_plain_text,
+            "display_message": processed_plain_text,
+        }
+
+        if traits["reply_to"]:
+            message_dict["reply_to"] = traits["reply_to"]
+
+        return message_dict
+
+    def get_thread_routing_info(self, message: discord.Message) -> Optional[Dict[str, Any]]:
+        """从 Discord 消息中提取子区（线程）路由元数据，供网关更新线程上下文。
+
+        Args:
+            message: 已判定可能位于子区内的 `Message`（通常由调用方与频道类型配合使用）。
+
+        Returns:
+            在公会内且频道为子区时返回包含 `parent_channel_id`、`thread_id`、`is_thread`、`is_inherit` 的字典；
+            非公会或非子区消息返回 None。
+        """
+        if not message.guild:
+            return None
+        is_thread = hasattr(message.channel, "parent") and message.channel.parent is not None
+        if not is_thread:
+            return None
+
+        inherit = getattr(self._chat_config, "inherit_channel_memory", True)
+        return {
+            "is_thread": True,
+            "parent_channel_id": str(message.channel.parent.id),
+            "thread_id": str(message.channel.id),
+            "is_inherit": inherit,
+        }
+
+
+    def _serialize_message_segment(self, segment: Any) -> List[Dict[str, Any]]:
+        """将适配器内部 `Seg` 树拍平成 Host 能识别的标准消息片段列表。"""
+        serialized: List[Dict[str, Any]] = []
+
+        def walk(seg: Any) -> None:
+            if not isinstance(seg, Seg) or not getattr(seg, "type", None):
                 return
 
-            logger.debug("消息转换成功，准备发送到 MaiBot Core")
-            logger.debug(f"  转换后平台: {maim_message.message_info.platform}")
-            logger.debug(f"  转换后消息ID: {maim_message.message_info.message_id}")
-            if maim_message.message_info.group_info:
-                group_name = maim_message.message_info.group_info.group_name
-                group_id = maim_message.message_info.group_info.group_id
-                logger.debug(f"  转换后群组: {group_name} (ID: {group_id})")
-            else:
-                logger.debug("  转换后群组: 私聊")
+            if seg.type == "seglist" and isinstance(seg.data, list):
+                for sub in seg.data:
+                    walk(sub)
+                return
 
-            # 发送到 MaiBot Core
-            if self.router:
-                await self.router.send_message(maim_message)
-                logger.debug(f"已成功转发 Discord 消息到 MaiBot Core: {message.id}")
+            if seg.type == "text":
+                text = self._normalize_text(seg.data)
+                if text:
+                    serialized.append({"type": "text", "data": text})
+                return
 
-                # 更新发送处理器的上下文映射
-                if self.send_handler:
-                    if ((hasattr(message.channel, 'parent') and message.channel.parent is not None
-                         and global_config.chat.inherit_channel_memory)):
-                        # 子区消息：更新上下文映射
-                        parent_channel_id = str(message.channel.parent.id)
-                        thread_id = str(message.channel.id)
-                        self.send_handler.update_thread_context(parent_channel_id, thread_id)
-                        logger.debug(f"更新子区上下文映射: 父频道{parent_channel_id} -> 子区{thread_id}")
-                    elif (hasattr(message.channel, 'type') and
-                          message.channel.type == discord.ChannelType.text and
-                          global_config.chat.inherit_channel_memory):
-                        # 父频道消息：清除该频道的子区映射，确保回复发送到父频道
-                        parent_channel_id = str(message.channel.id)
-                        self.send_handler.clear_thread_context(parent_channel_id)
-                        logger.debug(f"清除父频道的子区映射，确保回复发送到父频道: {parent_channel_id}")
-            else:
-                logger.error("MaiBot 路由器未设置，无法转发消息")
+            if seg.type in {"image", "emoji", "voice"}:
+                binary_component = self._build_binary_component(seg.type, seg.data)
+                if binary_component is not None:
+                    serialized.append(binary_component)
+                else:
+                    placeholder_map = {
+                        "image": "[图片]",
+                        "emoji": "[表情]",
+                        "voice": "[语音]",
+                    }
+                    serialized.append({"type": "text", "data": placeholder_map[seg.type]})
+                return
 
-        except (AttributeError, ValueError, TypeError) as e:
-            logger.error(f"处理 Discord 消息时发生错误: {e}")
-            logger.error(f"错误详情: {traceback.format_exc()}")
-        except Exception as e:  # pylint: disable=broad-except
-            logger.error(f"处理 Discord 消息时发生未知错误: {e}")
-            logger.error(f"错误详情: {traceback.format_exc()}")
+            if seg.type == "reply":
+                reply_id = self._normalize_text(seg.data)
+                if reply_id:
+                    serialized.append(
+                        {
+                            "type": "reply",
+                            "data": {
+                                "target_message_id": reply_id,
+                            },
+                        }
+                    )
+                return
 
-    async def _convert_discord_to_maim(self, message: discord.Message) -> MessageBase | None:
-        """将 Discord 消息转换为 MaiBot 格式
-        
+            if seg.type == "video":
+                serialized.append({"type": "text", "data": "[视频]"})
+                return
+
+            if seg.type == "file":
+                serialized.append({"type": "text", "data": "[文件]"})
+                return
+
+        walk(segment)
+        return serialized
+
+    def _build_binary_component(self, component_type: str, data: Any) -> Optional[Dict[str, Any]]:
+        """为图片/表情/语音片段构造 Host 标准二进制组件。"""
+        if not isinstance(data, str) or not data:
+            return None
+        return {
+            "type": component_type,
+            "data": "",
+            "binary_data_base64": data,
+        }
+
+    def _build_processed_plain_text(self, raw_message: List[Dict[str, Any]]) -> str:
+        """根据标准 raw_message 片段构建可展示的纯文本内容。"""
+        parts: List[str] = []
+        for component in raw_message:
+            if not isinstance(component, dict):
+                continue
+            component_type = str(component.get("type") or "").strip()
+            if component_type == "text":
+                parts.append(self._normalize_text(component.get("data")))
+                continue
+            if component_type == "image":
+                parts.append("[图片]")
+                continue
+            if component_type == "emoji":
+                parts.append("[表情]")
+                continue
+            if component_type == "voice":
+                parts.append("[语音]")
+                continue
+        return "".join(part for part in parts if part).strip()
+
+    def _analyze_segment_tree(self, segment: Any) -> Dict[str, Any]:
+        """从原始 `Seg` 树中提取触发标记与回复目标等元信息。"""
+        traits: Dict[str, Any] = {
+            "is_mentioned": False,
+            "is_at": False,
+            "is_emoji": False,
+            "is_picture": False,
+            "reply_to": None,
+        }
+
+        def walk(seg: Any) -> None:
+            if not isinstance(seg, Seg) or not getattr(seg, "type", None):
+                return
+
+            if seg.type == "seglist" and isinstance(seg.data, list):
+                for sub in seg.data:
+                    walk(sub)
+                return
+
+            if seg.type == "mention" and isinstance(seg.data, dict):
+                if seg.data.get("users") or seg.data.get("everyone") or seg.data.get("here"):
+                    traits["is_mentioned"] = True
+                    traits["is_at"] = True
+                return
+
+            if seg.type == "image":
+                traits["is_picture"] = True
+                return
+
+            if seg.type == "emoji":
+                traits["is_emoji"] = True
+                return
+
+            if seg.type == "reply" and traits["reply_to"] is None:
+                reply_id = self._normalize_text(seg.data)
+                if reply_id:
+                    traits["reply_to"] = reply_id
+
+        walk(segment)
+        return traits
+
+    @staticmethod
+    def _normalize_text(value: Any) -> str:
+        """将任意值规整为字符串；空值返回空串。"""
+        if value is None:
+            return ""
+        normalized = str(value)
+        return normalized if normalized else ""
+
+    async def _convert_discord_to_maim(self, message: discord.Message) -> Optional[MessageBase]:
+        """将单条 Discord 消息装配为 `MessageBase`（用户、群组、分段、引用与线程上下文）。
+
         Args:
-            message: Discord 消息对象
-            
+            message: Discord `Message`。
+
         Returns:
-            MessageBase | None: 转换后的 MaiBot 消息，转换失败时返回 None
+            成功时返回 `MessageBase`；无有效分段或出错时返回 None。
         """
         try:
-            logger.debug("开始构造 MaiBot 消息对象")
+            user_info = self._build_user_info(message.author)
 
-            # 构造用户信息
-            # 获取各种用户名称信息
-            username = message.author.name  # Discord用户名
-            display_name = message.author.display_name  # 显示名称（全局昵称或用户名）
-            # 服务器昵称
-            server_nickname = (getattr(message.author, 'nick', None)
-                             if hasattr(message.author, 'nick') else None)
-            # 全局显示名称
-            global_name = (getattr(message.author, 'global_name', None)
-                         if hasattr(message.author, 'global_name') else None)
-
-            user_info = UserInfo(
-                platform=global_config.maibot_server.platform_name,
-                user_id=str(message.author.id),
-                user_nickname=display_name,  # 主要显示名称
-                user_cardname=server_nickname  # 服务器内的昵称
-            )
-
-            # 详细记录用户信息
-            logger.debug("用户信息详情:")
-            logger.debug(f"  用户ID: {user_info.user_id}")
-            logger.debug(f"  Discord用户名: {username}")
-            logger.debug(f"  显示名称: {display_name}")
-            if global_name:
-                logger.debug(f"  全局昵称: {global_name}")
-            if server_nickname:
-                logger.debug(f"  服务器昵称: {server_nickname}")
-            logger.debug(f"  是否为机器人: {message.author.bot}")
-
-            # 构造群组信息（如果是服务器消息）
             group_info = None
-            # 初始化子区上下文变量
+            additional_config: Dict[str, Any] = {}
             thread_context_marker = False
-            original_thread_id = None
-            thread_name = None
+            original_thread_id: Optional[str] = None
+            thread_name: Optional[str] = None
 
             if message.guild:
-                # 检查是否为Thread消息
-                is_thread_message = (hasattr(message.channel, 'parent')
-                                    and message.channel.parent is not None)
+                is_thread = hasattr(message.channel, "parent") and message.channel.parent is not None
 
-                if is_thread_message:
-                    # Thread消息：根据配置决定是否继承父频道记忆
+                if is_thread:
                     thread_name = message.channel.name
-                    parent_channel_name = (message.channel.parent.name
-                                         if hasattr(message.channel.parent, 'name')
-                                         else f"频道{message.channel.parent.id}")
+                    parent_channel_name = (
+                        message.channel.parent.name
+                        if hasattr(message.channel.parent, "name")
+                        else f"频道{message.channel.parent.id}"
+                    )
+                    inherit = getattr(self._chat_config, "inherit_channel_memory", True)
 
-                    if global_config.chat.inherit_channel_memory:
-                        # 继承父频道记忆：使用父频道ID作为群组ID，但在消息中保留子区信息
-                        group_id = str(message.channel.parent.id)  # 使用父频道ID实现记忆共享
-                        # 格式: 父频道名称 @ 服务器名称 (用于显示和记忆)
+                    if inherit:
+                        group_id = str(message.channel.parent.id)
                         group_name = f"{parent_channel_name} @ {message.guild.name}"
-
-                        # 在群组名称中添加子区上下文信息，帮助AI理解当前在哪个子区
                         actual_context = f"[当前子区: {thread_name}] {group_name}"
                         group_info = GroupInfo(
-                            platform=global_config.maibot_server.platform_name,
-                            group_id=group_id,  # 父频道ID - 用于记忆共享
-                            group_name=actual_context  # 包含子区上下文的名称
+                            platform=self._platform_name,
+                            group_id=group_id,
+                            group_name=actual_context,
                         )
-                        logger.debug(f"子区继承父频道记忆: 子区={thread_name}, 使用父频道ID={group_id}, 但保留子区上下文")
-
-                        # 重要：标记这是一个从子区发出的消息，用于回复时的路由
                         thread_context_marker = True
                         original_thread_id = str(message.channel.id)
                     else:
-                        # 独立记忆：使用子区ID作为群组ID
                         group_id = str(message.channel.id)
-                        # 格式: 子区名称 [父频道名称] @ 服务器名称
                         group_name = f"{thread_name} [{parent_channel_name}] @ {message.guild.name}"
                         group_info = GroupInfo(
-                            platform=global_config.maibot_server.platform_name,
+                            platform=self._platform_name,
                             group_id=group_id,
-                            group_name=group_name
+                            group_name=group_name,
                         )
-                        logger.debug(f"子区使用独立记忆: 子区ID={group_id}")
-                        thread_context_marker = False
-                        original_thread_id = None
-
-                    logger.debug(f"群组信息 (子区): {group_info.group_name} (ID: {group_info.group_id})")
-                    logger.debug(f"父频道信息: {parent_channel_name} (ID: {message.channel.parent.id})")
-                    logger.debug(f"实际子区信息: {thread_name} (ID: {message.channel.id})")
-                    logger.debug(f"服务器信息: {message.guild.name} (ID: {message.guild.id})")
                 else:
-                    # 普通频道消息：使用频道作为群组
-                    channel_name = (message.channel.name if hasattr(message.channel, 'name')
-                                  else f"频道{message.channel.id}")
-                    # 格式: 频道名称 @ 服务器名称
-                    group_name = f"{channel_name} @ {message.guild.name}"
-
-                    group_info = GroupInfo(
-                        platform=global_config.maibot_server.platform_name,
-                        group_id=str(message.channel.id),  # 使用频道ID作为群组ID
-                        group_name=group_name
+                    channel_name = (
+                        message.channel.name
+                        if hasattr(message.channel, "name")
+                        else f"频道{message.channel.id}"
                     )
-                    logger.debug(f"群组信息 (频道): {group_info.group_name} (ID: {group_info.group_id})")
-                    logger.debug(f"服务器信息: {message.guild.name} (ID: {message.guild.id})")
-                    thread_context_marker = False
-                    original_thread_id = None
-            else:
-                logger.debug("私聊消息，无群组信息")
+                    group_name = f"{channel_name} @ {message.guild.name}"
+                    group_info = GroupInfo(
+                        platform=self._platform_name,
+                        group_id=str(message.channel.id),
+                        group_name=group_name,
+                    )
+                    if isinstance(message.channel, discord.VoiceChannel):
+                        additional_config["discord_channel_type"] = "voice"
+                    elif isinstance(message.channel, discord.StageChannel):
+                        additional_config["discord_channel_type"] = "stage"
+                    elif isinstance(message.channel, discord.TextChannel):
+                        additional_config["discord_channel_type"] = "text"
 
-            # 处理消息内容并构造消息段列表
-            message_segments = []
-            content_formats = []
+            message_segments: List[Seg] = []
+            content_formats: List[str] = []
 
-            # 处理@提及
-            mentions_info = await self._process_mentions(message)
+            mentions_info = self._process_mentions(message)
             if mentions_info:
                 message_segments.append(Seg(type="mention", data=mentions_info))
                 if "mention" not in content_formats:
                     content_formats.append("mention")
-                logger.debug(
-                    f"处理@提及: {len(mentions_info.get('users', []))}个用户, "
-                    f"{len(mentions_info.get('roles', []))}个角色"
-                )
 
-            # 处理文本内容（包含emoji检测和提及处理）
             if message.content:
-                processed_content = await self._process_text_with_emojis(message.content, message)
-                message_segments.extend(processed_content)
-
-                # 更新content_formats
-                for seg in processed_content:
+                processed = self._process_text_with_emojis(message.content, message)
+                message_segments.extend(processed)
+                for seg in processed:
                     if seg.type not in content_formats:
                         content_formats.append(seg.type)
 
-            # 处理附件（图片等）
             for attachment in message.attachments:
-                logger.debug(f"处理附件: {attachment.filename}, 类型: {attachment.content_type}")
-                if attachment.content_type and attachment.content_type.startswith('image/'):
+                if attachment.content_type and attachment.content_type.startswith("image/"):
                     try:
-                        # 下载图片并转换为 base64
                         image_data = await attachment.read()
-                        image_base64 = base64.b64encode(image_data).decode('utf-8')
+                        image_base64 = base64.b64encode(image_data).decode("utf-8")
                         message_segments.append(Seg(type="image", data=image_base64))
                         content_formats.append("image")
-                        logger.debug(f"处理图片附件: {attachment.filename}")
-                    except (discord.HTTPException, discord.NotFound, OSError) as e:
-                        logger.error(f"处理图片附件失败: {e}")
-                else:
-                    logger.debug(f"跳过非图片附件: {attachment.filename} ({attachment.content_type})")
+                    except (discord.HTTPException, discord.NotFound, OSError) as exc:
+                        self._logger.error(f"处理图片附件失败: {exc}")
 
-            # 处理Discord stickers（贴纸）
             for sticker in message.stickers:
-                try:
-                    logger.debug(f"发现Discord贴纸: {sticker.name} (ID: {sticker.id})")
-                    # Discord贴纸可以通过URL获取图片
-                    if hasattr(sticker, 'url'):
-                        # 这里可以下载贴纸图片并转换为base64
-                        # 暂时记录为文本，包含贴纸信息
-                        sticker_text = f"[贴纸: {sticker.name}]"
-                        if not message.content:
-                            message_segments.append(Seg(type="text", data=sticker_text))
-                            content_formats.append("text")
-                        else:
-                            # 如果已有文本内容，将贴纸信息追加
-                            if message_segments and message_segments[-1].type == "text":
-                                message_segments[-1].data += f" {sticker_text}"
-                        logger.debug(f"处理Discord贴纸: {sticker.name}")
-                except (AttributeError, TypeError) as e:
-                    logger.error(f"处理Discord贴纸失败: {e}")
+                sticker_text = f"[贴纸: {sticker.name}]"
+                if not message.content:
+                    message_segments.append(Seg(type="text", data=sticker_text))
+                    if "text" not in content_formats:
+                        content_formats.append("text")
+                elif message_segments and message_segments[-1].type == "text":
+                    message_segments[-1].data += f" {sticker_text}"
 
-            # 处理回复消息
             if message.reference and message.reference.message_id:
-
                 reply_message_id = str(message.reference.message_id)
-
-                # 获取回复上下文用于显示（可选）
                 reply_context = await self._get_reply_context(message)
                 if reply_context:
-                    # 在消息开头插入回复上下文文本
                     message_segments.insert(0, Seg(type="text", data=reply_context))
-
                 message_segments.append(Seg(type="reply", data=reply_message_id))
                 if "reply" not in content_formats:
                     content_formats.append("reply")
-                logger.debug(f"处理回复消息: {reply_message_id}")
 
-            # 如果是启用记忆继承的子区消息，在消息段中添加路由信息
             if thread_context_marker and original_thread_id:
-                # 添加一个特殊的路由信息段，用于指导回复时的目标选择
                 thread_routing_info = {
                     "original_thread_id": original_thread_id,
                     "thread_name": thread_name,
                     "parent_channel_id": str(message.channel.parent.id),
-                    "inherit_memory": True
+                    "inherit_memory": True,
                 }
                 message_segments.append(Seg(type="thread_context", data=thread_routing_info))
-                logger.debug(f"添加子区路由信息: {thread_routing_info}")
 
-            # 如果没有任何内容，跳过该消息
             if not message_segments:
-                logger.debug("消息没有可处理的内容，跳过")
                 return None
 
-            # 构造格式信息
             format_info = FormatInfo(
                 content_format=content_formats if content_formats else ["text"],
-                accept_format=[
-                    "text", "image", "emoji", "reply", "voice", "command", 
-                    "file", "video"
-                ]
+                accept_format=["text", "image", "emoji", "reply", "voice", "command", "file", "video"],
             )
-            # 部分格式现在无用
 
-            # 构造消息元数据
             message_info = BaseMessageInfo(
-                platform=global_config.maibot_server.platform_name,
+                platform=self._platform_name,
                 message_id=str(message.id),
                 time=message.created_at.timestamp(),
                 user_info=user_info,
                 group_info=group_info,
-                format_info=format_info
+                format_info=format_info,
+                additional_config=additional_config or None,
             )
 
-            # 构造完整消息段
             if len(message_segments) == 1:
                 message_segment = message_segments[0]
             else:
@@ -332,138 +482,128 @@ class DiscordMessageHandler:
             return MessageBase(
                 message_info=message_info,
                 message_segment=message_segment,
-                raw_message=message.content or ""
+                raw_message=message.content or "",
             )
 
-        except (AttributeError, ValueError, TypeError) as e:
-            logger.error(f"转换 Discord 消息时发生错误: {e}")
+        except Exception as exc:
+            self._logger.error(f"转换 Discord 消息时发生错误: {exc}")
             return None
 
-    async def _process_mentions(self, message: discord.Message) -> dict | None:
-        """处理消息中的@提及信息
-        
-        Args:
-            message: Discord消息对象
-            
-        Returns:
-            dict | None: 包含提及信息的字典，没有提及时返回None
-        """
-        mentions_data = {}
+    def _build_user_info(self, author: discord.User | discord.Member) -> UserInfo:
+        """从作者对象构造 Host `UserInfo`（展示名与服务器内昵称）。
 
-        # 处理用户提及
+        Args:
+            author: 消息作者，可为 `User` 或 `Member`。
+
+        Returns:
+            包含平台、用户 ID、昵称与服务器卡片的 `UserInfo`。
+        """
+        display_name = author.display_name
+        server_nickname = getattr(author, "nick", None)
+        return UserInfo(
+            platform=self._platform_name,
+            user_id=str(author.id),
+            user_nickname=display_name,
+            user_cardname=server_nickname,
+        )
+
+    def _process_mentions(self, message: discord.Message) -> Optional[Dict[str, Any]]:
+        """汇总消息中的 @用户、@角色、@频道及 @everyone/@here 信息为结构化字典。
+
+        Args:
+            message: 含 mentions 的 Discord `Message`。
+
+        Returns:
+            存在任一提及信息时返回结构化字典，否则返回 None。
+        """
+        mentions_data: Dict[str, Any] = {}
+
         if message.mentions:
             users = []
             for user in message.mentions:
-                # 获取用户的各种名称信息
-                username = user.name  # Discord用户名
-                display_name = user.display_name  # 显示名称
-                global_name = (getattr(user, 'global_name', None)
-                             if hasattr(user, 'global_name') else None)
-                server_nick = (getattr(user, 'nick', None)
-                             if hasattr(user, 'nick') else None)
-                # 全局或当前服务器名称
-
-                user_data = {
+                users.append({
                     "user_id": str(user.id),
-                    "username": username,  # Discord原始用户名
-                    "display_name": display_name,  # 当前显示名称
-                    "global_name": global_name,  # 全局昵称（如果有）
-                    "server_nickname": server_nick,  # 服务器内昵称（如果有）
+                    "username": user.name,
+                    "display_name": user.display_name,
+                    "global_name": getattr(user, "global_name", None),
+                    "server_nickname": getattr(user, "nick", None),
                     "is_bot": user.bot,
-                    "discriminator": getattr(user, 'discriminator', None)  # 用户标识符（旧版Discord）
-                }
-                users.append(user_data)
-                logger.debug(f"提及用户详情: {username} (ID: {user.id}, 显示名: {display_name})")
+                    "discriminator": getattr(user, "discriminator", None),
+                })
             mentions_data["users"] = users
-            logger.debug(f"检测到用户提及: {len(users)}个用户")
 
-        # 处理角色提及
         if message.role_mentions:
             roles = []
             for role in message.role_mentions:
-                role_data = {
+                roles.append({
                     "role_id": str(role.id),
                     "role_name": role.name,
                     "color": str(role.color),
-                    "mentionable": role.mentionable
-                }
-                roles.append(role_data)
+                    "mentionable": role.mentionable,
+                })
             mentions_data["roles"] = roles
-            logger.debug(f"检测到角色提及: {len(roles)}个角色")
 
-        # 处理频道提及
-        if hasattr(message, 'channel_mentions') and message.channel_mentions:
+        if hasattr(message, "channel_mentions") and message.channel_mentions:
             channels = []
             for channel in message.channel_mentions:
-                channel_data = {
+                channels.append({
                     "channel_id": str(channel.id),
                     "channel_name": channel.name,
-                    "channel_type": str(channel.type)
-                }
-                channels.append(channel_data)
+                    "channel_type": str(channel.type),
+                })
             mentions_data["channels"] = channels
-            logger.debug(f"检测到频道提及: {len(channels)}个频道")
 
-        # 检查是否提及了所有人
         if "@everyone" in message.content or "@here" in message.content:
             mentions_data["everyone"] = "@everyone" in message.content
             mentions_data["here"] = "@here" in message.content
-            logger.debug(
-                f"检测到全体提及: everyone={mentions_data.get('everyone', False)}, "
-                f"here={mentions_data.get('here', False)}"
-            )
 
         return mentions_data if mentions_data else None
 
-    async def _process_text_with_emojis(self, text: str,
-                                       message: discord.Message = None) -> List[Seg]:
-        """处理包含emoji和提及的文本内容
-        
+    def _process_text_with_emojis(
+        self, text: str, message: Optional[discord.Message] = None
+    ) -> List[Seg]:
+        """将原始文本中的 Discord 提及占位符替换为可读形式，再拆分为文本/表情分段。
+
         Args:
-            text: 原始文本内容
-            message: Discord消息对象（用于获取提及信息）
-            
+            text: 消息正文字符串。
+            message: 若提供，则用于解析用户/角色/频道提及以替换 `<@...>` 等。
+
         Returns:
-            List[Seg]: 处理后的消息段列表
+            文本与表情拆分后的 `Seg` 列表。
         """
-        # 先处理提及，将<@user_id>替换为用户名
         processed_text = text
         if message and message.mentions:
             for user in message.mentions:
-                # 替换<@!user_id>和<@user_id>格式
-                user_mention_patterns = [f"<@!{user.id}>", f"<@{user.id}>"]
-                for pattern in user_mention_patterns:
+                for pattern in (f"<@!{user.id}>", f"<@{user.id}>"):
                     if pattern in processed_text:
-                        # 优先使用服务器昵称，然后是全局昵称，最后是显示名称
-                        server_nick = getattr(user, 'nick', None) if hasattr(user, 'nick') else None
-                        global_name = (getattr(user, 'global_name', None)
-                                        if hasattr(user, 'global_name') else None)
-                        display_name = server_nick or global_name or user.display_name
+                        server_nick = getattr(user, "nick", None)
+                        global_name = getattr(user, "global_name", None)
+                        display = server_nick or global_name or user.display_name
+                        processed_text = processed_text.replace(pattern, f"@{display}")
 
-                        processed_text = processed_text.replace(pattern, f"@{display_name}")
-                        logger.debug(f"替换用户提及: {pattern} -> @{display_name} (用户名: {user.name})")
-
-        # 处理角色提及
         if message and message.role_mentions:
             for role in message.role_mentions:
                 role_pattern = f"<@&{role.id}>"
                 if role_pattern in processed_text:
                     processed_text = processed_text.replace(role_pattern, f"@{role.name}")
-                    logger.debug(f"替换角色提及: {role_pattern} -> @{role.name}")
 
-        # 处理频道提及
-        if message and hasattr(message, 'channel_mentions'):
+        if message and hasattr(message, "channel_mentions"):
             for channel in message.channel_mentions:
                 channel_pattern = f"<#{channel.id}>"
                 if channel_pattern in processed_text:
                     processed_text = processed_text.replace(channel_pattern, f"#{channel.name}")
-                    logger.debug(f"替换频道提及: {channel_pattern} -> #{channel.name}")
 
-        # 继续处理emoji（使用处理后的文本）
-        return await self._process_emoji_text(processed_text)
+        return self._process_emoji_text(processed_text)
 
-    async def _process_emoji_text(self, text: str) -> List[Seg]:
-        # Unicode emoji正则表达式
+    def _process_emoji_text(self, text: str) -> List[Seg]:
+        """按 Discord 自定义表情语法与 Unicode 表情规则将正文拆成多个 `Seg`（以文本为主）。
+
+        Args:
+            text: 已处理提及占位符后的正文。
+
+        Returns:
+            按自定义表情切分后的 `Seg` 列表；无表情时为单段文本。
+        """
         unicode_emoji_pattern = re.compile(
             "["
             "\U0001F600-\U0001F64F"
@@ -471,329 +611,149 @@ class DiscordMessageHandler:
             "\U0001F680-\U0001F6FF"
             "\U0001F1E0-\U0001F1FF"
             "\U00002702-\U000027B0"
-            "\U000024C2-\U0001F251" 
-            "]+", 
-            flags=re.UNICODE
+            "\U000024C2-\U0001F251"
+            "]+",
+            flags=re.UNICODE,
         )
+        discord_custom_emoji_pattern = re.compile(r"<a?:(\w+):(\d+)>")
 
-        # Discord自定义emoji正则表达式 (<:name:id> 或 <a:name:id>)
-        discord_custom_emoji_pattern = re.compile(r'<a?:(\w+):(\d+)>')
+        has_unicode = bool(unicode_emoji_pattern.search(text))
+        has_custom = bool(discord_custom_emoji_pattern.search(text))
 
-        # 先检测是否包含emoji
-        has_unicode_emoji = bool(unicode_emoji_pattern.search(text))
-        has_custom_emoji = bool(discord_custom_emoji_pattern.search(text))
-
-        if not has_unicode_emoji and not has_custom_emoji:
-            # 没有emoji，直接返回文本段
+        if not has_unicode and not has_custom:
             return [Seg(type="text", data=text)]
 
-        logger.debug(f"检测到emoji内容: Unicode={has_unicode_emoji}, Custom={has_custom_emoji}")
-
-        # 如果包含emoji，需要分段处理
-        segments = []
+        segments: List[Seg] = []
         current_pos = 0
 
-        # 处理Discord自定义emoji
         for match in discord_custom_emoji_pattern.finditer(text):
-            # 添加emoji前的文本
             if match.start() > current_pos:
-                before_text = text[current_pos:match.start()]
-                if before_text.strip():
-                    segments.append(Seg(type="text", data=before_text))
+                before = text[current_pos : match.start()]
+                if before.strip():
+                    segments.append(Seg(type="text", data=before))
 
-            # 添加自定义emoji信息（作为文本，包含名称）
             emoji_name = match.group(1)
-            emoji_id = match.group(2)
-            is_animated = text[match.start():match.end()].startswith('<a:')
-
-            emoji_text = f"[{emoji_name}]"
-            if is_animated:
-                emoji_text = f"[动画:{emoji_name}]"
-
+            is_animated = text[match.start() : match.end()].startswith("<a:")
+            emoji_text = f"[动画:{emoji_name}]" if is_animated else f"[{emoji_name}]"
             segments.append(Seg(type="text", data=emoji_text))
-            logger.debug(f"处理Discord自定义emoji: {emoji_name} (ID: {emoji_id})")
-
             current_pos = match.end()
 
-        # 添加剩余文本
         if current_pos < len(text):
-            remaining_text = text[current_pos:]
-            if remaining_text.strip():
-                segments.append(Seg(type="text", data=remaining_text))
+            remaining = text[current_pos:]
+            if remaining.strip():
+                segments.append(Seg(type="text", data=remaining))
 
-        # 如果只有Unicode emoji而没有自定义emoji，直接返回文本
-        if has_unicode_emoji and not has_custom_emoji and not segments:
+        if has_unicode and not has_custom and not segments:
             segments.append(Seg(type="text", data=text))
 
         return segments if segments else [Seg(type="text", data=text)]
 
-    async def _get_reply_context(self, message: discord.Message) -> str | None:
-        """获取回复上下文信息，格式化为易读文本
-        "[回复<用户名:用户ID>：被回复内容]，说："的格式。
-        
+    async def _get_reply_context(self, message: discord.Message) -> Optional[str]:
+        """拉取被引用消息的摘要字符串，用于插入回复链上下文（作者、截断正文与附件提示）。
+
         Args:
-            message: 包含回复引用的Discord消息对象
-            
+            message: 带 `reference` 的 `Message`。
+
         Returns:
-            str | None: 格式化后的回复上下文文本，获取失败时返回None
+            可读的引用前缀字符串；无引用时返回 None；拉取失败时返回带消息 ID 的占位说明。
         """
         try:
             if not message.reference or not message.reference.message_id:
                 return None
 
-            # 尝试获取被回复的消息
             referenced_message = None
             try:
-                if (hasattr(message.reference, 'cached_message') and
-                    message.reference.cached_message):
-                    referenced_message = message.reference.cached_message
+                cached = getattr(message.reference, "cached_message", None)
+                if cached:
+                    referenced_message = cached
                 else:
-                    message_id = message.reference.message_id
-                    referenced_message = await message.channel.fetch_message(message_id)
+                    referenced_message = await message.channel.fetch_message(
+                        message.reference.message_id
+                    )
             except (discord.NotFound, discord.Forbidden):
-                logger.warning(f"无法获取被回复的消息: {message.reference.message_id}")
                 return f"[回复消息{message.reference.message_id}]，说："
-            except (discord.HTTPException, AttributeError) as e:
-                logger.warning(f"获取被回复消息时发生错误: {e}")
+            except (discord.HTTPException, AttributeError):
                 return f"[回复消息{message.reference.message_id}]，说："
 
             if not referenced_message:
                 return f"[回复消息{message.reference.message_id}]，说："
 
-            # 构建回复上下文
             author_name = referenced_message.author.display_name
             author_id = referenced_message.author.id
             is_bot = referenced_message.author.bot
             content = referenced_message.content or "[无文本内容]"
-
-            # 限制内容长度
             if len(content) > 100:
                 content = content[:100] + "..."
-
-            # 添加附件信息
             if referenced_message.attachments:
-                attachment_count = len(referenced_message.attachments)
-                content += f"[包含{attachment_count}个附件]"
+                content += f"[包含{len(referenced_message.attachments)}个附件]"
 
-            # 构建格式化文本
             user_type = "机器人" if is_bot else "用户"
-            reply_text = f"[回复<{user_type}{author_name}:{author_id}>：{content}]，说："
+            return f"[回复<{user_type}{author_name}:{author_id}>：{content}]，说："
 
-            logger.debug(f"格式化回复上下文: {reply_text}")
-            return reply_text
-
-        except (AttributeError, TypeError, ValueError) as e:
-            logger.error(f"处理回复上下文时发生错误: {e}")
+        except Exception as exc:
+            self._logger.error(f"处理回复上下文时发生错误: {exc}")
             return f"[回复消息{message.reference.message_id}]，说："
-
-    async def handle_reaction_event(
-        self,
-        event_type: str,
-        payload: discord.RawReactionActionEvent
-    ) -> None:
-        """处理reaction事件
-        
-        Args:
-            event_type: 事件类型
-            payload: Discord reaction事件数据
-        """
-        try:
-            logger.debug(f"开始处理 {event_type} 事件:")
-            logger.debug(f"  用户ID: {payload.user_id}")
-            logger.debug(f"  消息ID: {payload.message_id}")
-            logger.debug(f"  频道ID: {payload.channel_id}")
-            logger.debug(f"  Emoji: {payload.emoji}")
-
-            # 转换为MaiBot消息格式
-            maim_message = await self._convert_reaction_to_maim(event_type, payload)
-            if not maim_message:
-                logger.warning("Reaction事件转换失败，跳过该事件")
-                return
-
-            logger.debug("Reaction事件转换成功，准备发送到 MaiBot Core")
-            logger.debug(f"  转换后平台: {maim_message.message_info.platform}")
-            logger.debug(f"  转换后消息ID: {maim_message.message_info.message_id}")
-
-            # 发送到 MaiBot Core
-            if self.router:
-                await self.router.send_message(maim_message)
-                action_text = "添加" if event_type == 'reaction_add' else "移除"
-                logger.info(
-                    f"已转发 {event_type} 事件到 MaiBot Core: "
-                    f"用户 {payload.user_id} {action_text}表情 {payload.emoji} "
-                    f"在消息 {payload.message_id} 上"
-                )
-            else:
-                logger.error("MaiBot 路由器未设置，无法转发 reaction 事件")
-
-        except Exception as e:  # pylint: disable=broad-except
-            logger.error(f"处理 {event_type} 事件时发生错误: {e}")
-            logger.error(f"错误详情: {traceback.format_exc()}")
 
     async def _convert_reaction_to_maim(
         self,
         event_type: str,
-        payload: discord.RawReactionActionEvent
+        payload: discord.RawReactionActionEvent,
+        client: discord.Client,
     ) -> Optional[MessageBase]:
-        """转换reaction事件为MaiBot消息格式"""
+        """将 Reaction 事件装配为含文本描述与 `reaction_event` 分段的 `MessageBase`。
+
+        Args:
+            event_type: reaction_add 或 reaction_remove 等。
+            payload: 原始 Reaction 事件载荷。
+            client: Bot 客户端，用于解析用户与频道/线程信息。
+
+        Returns:
+            成功返回 `MessageBase`；无法解析用户或异常时返回 None。
+        """
         try:
-
-            # 获取Discord客户端
-            client = discord_client.client
-            if not client:
-                logger.error("Discord客户端未初始化")
-                return None
-
-            # 获取用户信息（优先获取Member以获取服务器昵称）
-            user = None
-            member = None
-
-            if payload.member:
-                member = payload.member
-                user = payload.member
-            else:
-                # 从guild中获取member
-                guild = client.get_guild(payload.guild_id) if payload.guild_id else None
-                if guild:
-                    member = guild.get_member(payload.user_id)
-                    if not member:
-                        try:
-                            member = await guild.fetch_member(payload.user_id)
-                        except (discord.NotFound, discord.HTTPException) as e:
-                            logger.warning(f"无法获取成员 {payload.user_id}: {e}")
-
-                    if member:
-                        user = member
-
-                # 如果无法获取member，退而求其次获取user
-                if not user:
-                    user = client.get_user(payload.user_id)
-                    if not user:
-                        try:
-                            user = await client.fetch_user(payload.user_id)
-                        except (discord.NotFound, discord.HTTPException) as e:
-                            logger.error(f"无法获取用户 {payload.user_id}: {e}")
-                            return None
-
+            user, member = await self._resolve_reaction_user(payload, client)
             if not user:
-                logger.error(f"无法获取用户 {payload.user_id} 的信息")
+                self._logger.error(f"无法获取用户 {payload.user_id} 的信息")
                 return None
 
-            # 构造用户信息
             user_display_name = getattr(user, "display_name", None) or user.name
             server_nickname = getattr(member, "nick", None) if member else None
 
             user_info = UserInfo(
-                platform=global_config.maibot_server.platform_name,
+                platform=self._platform_name,
                 user_id=str(user.id),
                 user_nickname=user_display_name,
-                user_cardname=server_nickname
+                user_cardname=server_nickname,
             )
 
-            logger.debug(f"Reaction用户信息: {user_display_name} (ID: {user.id})")
-
-            # 构造群组信息
             group_info = None
-            guild_name = None
             is_thread = False
             thread_name = None
 
             if payload.guild_id:
-                # 获取频道信息
-                channel = client.get_channel(payload.channel_id)
-                if not channel:
-                    try:
-                        channel = await client.fetch_channel(payload.channel_id)
-                    except (discord.NotFound, discord.HTTPException) as e:
-                        logger.warning(f"无法获取频道 {payload.channel_id}: {e}")
-                        channel = None
-
-                # 获取服务器信息
-                guild = client.get_guild(payload.guild_id)
-                if guild:
-                    guild_name = guild.name
-
-                # 判断是否为子区并构造群组信息
-                if channel and isinstance(channel, discord.Thread):
-                    is_thread = True
-                    thread_name = channel.name
-                    parent_channel = getattr(channel, 'parent', None)
-
-                    if parent_channel and global_config.chat.inherit_channel_memory:
-                        # 子区继承父频道记忆模式
-                        channel_name = parent_channel.name
-                        group_id = str(parent_channel.id)
-                        group_name = f"[当前子区: {thread_name}] {channel_name}"
-                        if guild_name:
-                            group_name += f" @ {guild_name}"
-                        logger.debug(f"子区继承父频道记忆: {thread_name} -> 父频道ID {group_id}")
-                    else:
-                        # 子区独立记忆模式
-                        channel_name = thread_name
-                        group_id = str(channel.id)
-                        group_name = channel_name
-                        if parent_channel:
-                            group_name += f" [{parent_channel.name}]"
-                        if guild_name:
-                            group_name += f" @ {guild_name}"
-                        logger.debug(f"子区使用独立记忆: 子区ID={group_id}")
-                elif channel:
-                    # 普通频道
-                    channel_name = channel.name if hasattr(channel, 'name') else f"频道{channel.id}"
-                    group_id = str(channel.id)
-                    group_name = channel_name
-                    if guild_name:
-                        group_name += f" @ {guild_name}"
-                else:
-                    # 无法获取频道信息，使用频道ID
-                    group_id = str(payload.channel_id)
-                    group_name = f"频道{payload.channel_id}"
-                    if guild_name:
-                        group_name += f" @ {guild_name}"
-
-                group_info = GroupInfo(
-                    platform=global_config.maibot_server.platform_name,
-                    group_id=group_id,
-                    group_name=group_name
+                group_info, is_thread, thread_name = await self._build_reaction_group_info(
+                    payload, client
                 )
-                logger.debug(f"Reaction群组信息: {group_name} (ID: {group_id})")
 
-            # 获取并格式化emoji信息
             emoji = payload.emoji
             if emoji.is_unicode_emoji():
-                emoji_str = emoji.name  # Unicode emoji直接使用name
+                emoji_str = emoji.name
                 emoji_name = None
             else:
-                # 自定义emoji使用Discord格式
                 emoji_str = f"<:{emoji.name}:{emoji.id}>"
                 emoji_name = emoji.name
 
-            # 使用emoji_mapping获取emoji的含义
-            emoji_meaning, emoji_display = get_emoji_meaning(emoji_str, emoji_name)
-
-            logger.debug(f"Emoji信息: {emoji_str} -> {emoji_display} ({emoji_meaning})")
-            logger.debug(f"Emoji类型: {'Unicode' if emoji.is_unicode_emoji() else '自定义'}")
-
-            # 构造消息内容
-            action_text = "添加了" if event_type == 'reaction_add' else "移除了"
-
-
-            description = format_reaction_for_ai(emoji_str, emoji_name, 1, user_display_name)
-            # 调整描述文本以匹配实际操作
+            emoji_meaning, emoji_display = get_emoji_meaning(emoji_str, emoji_name or "")
+            action_text = "添加了" if event_type == "reaction_add" else "移除了"
+            description = format_reaction_for_ai(emoji_str, emoji_name or "", 1, user_display_name)
             description = description.replace("添加了", action_text)
 
-            logger.debug(f"格式化描述: {description}")
-
-            # 构造消息段列表
-            message_segments = []
-
-            # 添加文本说明段
+            message_segments: List[Seg] = []
             message_segments.append(Seg(type="text", data=description))
 
-            # 添加reaction元数据段（供MaiBot Core和插件使用）
             reaction_metadata = {
                 "event_type": event_type,
-                "action": "add" if event_type == 'reaction_add' else "remove",
+                "action": "add" if event_type == "reaction_add" else "remove",
                 "user_id": str(payload.user_id),
                 "user_name": user_display_name,
                 "message_id": str(payload.message_id),
@@ -808,33 +768,23 @@ class DiscordMessageHandler:
             }
             message_segments.append(Seg(type="reaction_event", data=reaction_metadata))
 
-            # 构造格式信息
             format_info = FormatInfo(
                 content_format=["text", "reaction_event"],
-                accept_format=[
-                    "text", "image", "emoji", "reply", "voice", "command",
-                    "file", "video", "reaction"
-                ]
+                accept_format=["text", "image", "emoji", "reply", "voice", "command", "file", "video", "reaction"],
             )
 
-            # 构造唯一消息ID（使用原始消息ID、用户ID、事件类型和时间戳的组合）
-            timestamp = int(time.time() * 1000)  # 毫秒级时间戳确保唯一性
+            timestamp = int(time.time() * 1000)
+            unique_id = f"reaction_{payload.message_id}_{payload.user_id}_{event_type}_{timestamp}"
 
-
-            unique_message_id = f"reaction_{payload.message_id}_"
-            unique_message_id += f"{payload.user_id}_{event_type}_{timestamp}"
-
-            # 构造消息元数据
             message_info = BaseMessageInfo(
-                platform=global_config.maibot_server.platform_name,
-                message_id=unique_message_id,
+                platform=self._platform_name,
+                message_id=unique_id,
                 time=time.time(),
                 user_info=user_info,
                 group_info=group_info,
-                format_info=format_info
+                format_info=format_info,
             )
 
-            # 构造完整消息段
             if len(message_segments) == 1:
                 message_segment = message_segments[0]
             else:
@@ -843,14 +793,113 @@ class DiscordMessageHandler:
             return MessageBase(
                 message_info=message_info,
                 message_segment=message_segment,
-                raw_message=description
+                raw_message=description,
             )
 
-        except Exception as e:  # pylint: disable=broad-except
-            logger.error(f"转换 reaction 事件时发生错误: {e}")
-            logger.error(f"错误详情: {traceback.format_exc()}")
+        except Exception as exc:
+            self._logger.error(f"转换 reaction 事件时发生错误: {exc}")
+            self._logger.debug(traceback.format_exc())
             return None
 
+    async def _resolve_reaction_user(
+        self, payload: discord.RawReactionActionEvent, client: discord.Client
+    ) -> tuple[Optional[discord.User], Optional[discord.Member]]:
+        """从载荷与缓存中解析操作 Reaction 的用户及公会内 `Member`（若存在）。
 
-# 创建全局消息处理器实例
-message_handler: DiscordMessageHandler = DiscordMessageHandler()
+        Args:
+            payload: 原始 Reaction 事件。
+            client: 用于 `get_guild` / `fetch_member` / `fetch_user` 的客户端。
+
+        Returns:
+            `(User 或 None, Member 或 None)`；公会场景下优先填充 Member。
+        """
+        user: Optional[discord.User] = None
+        member: Optional[discord.Member] = None
+
+        if payload.member:
+            member = payload.member
+            user = payload.member
+        else:
+            guild = client.get_guild(payload.guild_id) if payload.guild_id else None
+            if guild:
+                member = guild.get_member(payload.user_id)
+                if not member:
+                    try:
+                        member = await guild.fetch_member(payload.user_id)
+                    except (discord.NotFound, discord.HTTPException):
+                        pass
+                if member:
+                    user = member
+
+            if not user:
+                user = client.get_user(payload.user_id)
+                if not user:
+                    try:
+                        user = await client.fetch_user(payload.user_id)
+                    except (discord.NotFound, discord.HTTPException):
+                        pass
+
+        return user, member
+
+    async def _build_reaction_group_info(
+        self, payload: discord.RawReactionActionEvent, client: discord.Client
+    ) -> tuple[Optional[GroupInfo], bool, Optional[str]]:
+        """根据频道 ID 解析 `GroupInfo`，并判断是否在子区及子区名称。
+
+        Args:
+            payload: 含 `channel_id` / `guild_id` 的 Reaction 载荷。
+            client: 用于 `get_channel` / `fetch_channel` / `get_guild` 的客户端。
+
+        Returns:
+            `(GroupInfo, 是否为子区, 子区名称或 None)`；频道不可见时仍返回基于 ID 构造的 `GroupInfo`。
+        """
+        is_thread = False
+        thread_name = None
+
+        channel = client.get_channel(payload.channel_id)
+        if not channel:
+            try:
+                channel = await client.fetch_channel(payload.channel_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                channel = None
+
+        guild = client.get_guild(payload.guild_id) if payload.guild_id else None
+        guild_name = guild.name if guild else None
+
+        if channel and isinstance(channel, discord.Thread):
+            is_thread = True
+            thread_name = channel.name
+            parent_channel = getattr(channel, "parent", None)
+            inherit = getattr(self._chat_config, "inherit_channel_memory", True)
+
+            if parent_channel and inherit:
+                channel_name = parent_channel.name
+                group_id = str(parent_channel.id)
+                group_name = f"[当前子区: {thread_name}] {channel_name}"
+                if guild_name:
+                    group_name += f" @ {guild_name}"
+            else:
+                group_id = str(channel.id)
+                group_name = thread_name or ""
+                if parent_channel:
+                    group_name += f" [{parent_channel.name}]"
+                if guild_name:
+                    group_name += f" @ {guild_name}"
+        elif channel:
+            channel_name = channel.name if hasattr(channel, "name") else f"频道{channel.id}"
+            group_id = str(channel.id)
+            group_name = channel_name
+            if guild_name:
+                group_name += f" @ {guild_name}"
+        else:
+            group_id = str(payload.channel_id)
+            group_name = f"频道{payload.channel_id}"
+            if guild_name:
+                group_name += f" @ {guild_name}"
+
+        group_info = GroupInfo(
+            platform=self._platform_name,
+            group_id=group_id,
+            group_name=group_name,
+        )
+        return group_info, is_thread, thread_name

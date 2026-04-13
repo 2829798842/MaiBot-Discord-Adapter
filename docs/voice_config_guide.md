@@ -1,294 +1,179 @@
-# MaiBot Discord Adapter 语音功能配置指南
+# 语音配置指南
 
-本文档详细说明如何配置 MaiBot Discord Adapter 的语音功能，包括 TTS（文本转语音）和 STT（语音转文本）。
+这份文档只说明 `maibot-discord-adapter` 当前已经实现的语音配置项。
+其中 GPT-SoVITS 现在统一走新版 GSV FastAPI，同时兼容 classic 权重接口和 infer_single 模板模型接口；如果 classic 没配完整，或 classic 请求失败，运行时会带日志自动回退到 infer_single 模板模型链路。
 
----
+## 总览
 
-## 目录
+语音功能由三层配置组成：
 
-1. [语音功能概述](#语音功能概述)
-2. [基础配置](#基础配置)
-3. [TTS 提供商配置](#tts-提供商配置)
-   - [Azure TTS](#1-azure-tts)
-   - [AI Hobbyist TTS](#2-ai-hobbyist-tts)
-   - [SiliconFlow TTS](#3-siliconflow-tts)
-4. [STT 提供商配置](#stt-提供商配置)
-   - [Azure STT](#1-azure-stt)
-   - [Aliyun STT](#2-aliyun-stt)
-   - [SiliconFlow STT](#3-siliconflow-stt)
-5. [故障排查](#故障排查)
+1. `[voice]`
+   控制是否启用语音、频道模式、TTS/STT 提供商、VAD 等总开关。
+2. `[xxx_tts]`
+   控制具体的文本转语音服务。
+3. `[xxx_stt]`
+   控制具体的语音转文本服务。
 
----
+如果只是先把 Discord 语音播报跑起来，最少需要：
 
-## 语音功能概述
+- `voice.enabled = true`
+- `connection.intent_voice_states = true`
+- `voice.tts_provider = "gptsovits"` 或其他 TTS
+- 语音频道配置正确
 
-MaiBot Discord Adapter 支持以下语音功能：
-
-- **TTS（文本转语音）**：将 MaiBot 的回复转换为语音并在 Discord 语音频道播放
-- **STT（语音转文本）**：识别用户在语音频道的语音输入并转换为文本发送给 MaiBot
-
-
-## 基础配置
-
-在 `config.toml` 中配置语音功能基础设置：
+## `[voice]` 关键项
 
 ```toml
 [voice]
-enabled = true  # 是否启用语音功能
-voice_channel_whitelist = [1234567890123456789]  # 语音频道白名单（填入频道ID）
-check_interval = 30       # 频道切换检查间隔（秒），仅多频道时生效
-tts_provider = "azure"    # TTS 提供商（azure, ai_hobbyist, siliconflow）
-stt_provider = "azure"    # STT 提供商（azure, aliyun, siliconflow）
+enabled = true
+voice_mode = "fixed"
+fixed_channel_id = "123456789012345678"
+auto_channel_list = []
+idle_timeout_sec = 300
+tts_provider = "gptsovits"
+stt_provider = "siliconflow_sensevoice"
+enable_vad = true
+vad_threshold_db = -50.0
+vad_deactivation_delay_ms = 500
+send_text_in_voice = false
 ```
 
-### 获取 Discord 频道 ID
+字段说明：
 
-1. 启用 Discord 开发者模式：`用户设置` → `高级` → `开发者模式`
-2. 右键点击语音频道 → `复制频道 ID`
-3. 将 ID 填入 `voice_channel_whitelist`
+- `voice_mode = "fixed"`
+  常驻一个语音频道，使用 `fixed_channel_id`
+- `voice_mode = "auto"`
+  在 `auto_channel_list` 候选频道里自动进出
+- `fixed_channel_id`
+  必须填写真正的语音频道 ID，而不是频道分类 ID
+- `send_text_in_voice`
+  开启后，TTS 播报时还会往文字区同步发一份文本，适合调试
 
-### 单频道 vs 多频道模式
+## 语音接入前置条件
 
-- **单频道**：`voice_channel_whitelist` 只有一个 ID，Bot 固定在该频道
-- **多频道**：有多个 ID，Bot 自动切换到有人的频道
+如果现在“就是进不了语音频道”，优先检查下面四项：
 
----
+- `voice.enabled = true`
+- `connection.intent_voice_states = true`
+- `voice.voice_mode = "fixed"` 时，`voice.fixed_channel_id` 是否真的是语音频道 ID
+- Bot 在目标语音频道是否有 `View Channel`、`Connect`、`Speak` 权限
 
-## TTS 提供商配置
+当前适配器会先尝试从缓存取频道，取不到时再回退到 Discord API `fetch_channel()`，并同时支持普通语音频道和 Stage Channel。
 
-### 1. Azure TTS
+## 其他 TTS 默认建议
 
-音质高、稳定、支持多语言
+### SiliconFlow
 
-#### 配置步骤
-
-[这里直接推荐一位老师的教程](https://bobtranslate.com/service/tts/microsoft.html)
-
-1. 注册 Azure 账号并创建语音服务资源：https://portal.azure.com
-2. 获取订阅密钥和区域信息
-3. 在 `config.toml` 中配置：
+推荐先用这组更稳的默认值：
 
 ```toml
-[voice.azure]
-subscription_key = "你的订阅密钥"  # Azure 语音服务密钥
-region = "eastus"  # Azure 服务区域（eastasia, southeastasia, westus, eastus 等）
-tts_voice = "zh-CN-XiaoxiaoNeural"  # TTS 语音名称
-stt_language = "zh-CN"  # STT 识别语言
+[siliconflow_tts]
+api_key = ""
+api_base = "https://api.siliconflow.cn/v1"
+model = "fnlp/MOSS-TTSD-v0.5"
+voice = "fnlp/MOSS-TTSD-v0.5:alex"
+sample_rate = 32000
+speed = 1.0
+response_format = "wav"
 ```
 
-#### 可用语音列表
+说明：
 
-- 中文女声：`zh-CN-XiaoxiaoNeural`, `zh-CN-XiaoyiNeural`
-- 中文男声：`zh-CN-YunxiNeural`, `zh-CN-YunyangNeural`
-- 更多语音：https://learn.microsoft.com/azure/cognitive-services/speech-service/language-support
+- `wav` 是当前适配器里最稳的默认格式
+- `pcm` / `wav` 不要再配成 `48000`
+- 如果你确实想用 `opus`，采样率要配成 `48000`
 
-#### 常用区域
+### MiniMax
 
-- `eastasia` - 东亚（香港）
-- `southeastasia` - 东南亚（新加坡）
-- `eastus` - 美国东部
-- `westus` - 美国西部
-
----
-
-### 2. AI Hobbyist TTS
-
-二次元角色语音
-
-#### 配置步骤
-
-1. 访问官网：https://tts.acgnai.top/
-2. 注册并登录
-3. 点击右上角用户名，获取访问令牌（Token）
-4. 在 `config.toml` 中配置：
+当前插件内部已经按新版 `voice_setting` / `audio_setting` 请求体发送请求。
+推荐先用这组配置：
 
 ```toml
-[voice.ai_hobbyist]
-api_base = "https://gsv2p.acgnai.top"  # API 基础地址
-api_token = "你的访问令牌"  # 从官网获取的 Token
-model_name = "原神-中文-芙宁娜_ZH"  # 语音模型名称
-language = "中文"  # 语言
-emotion = "默认"   # 语气
+[minimax_tts]
+api_key = ""
+api_base = "https://api.minimax.io"
+model = "speech-2.8-hd"
+voice_id = "male-qn-qingse"
+speed = 1.0
+vol = 1.0
+pitch = 0.0
+audio_sample_rate = 32000
+output_format = "mp3"
 ```
 
-#### 获取可用模型
+说明：
 
-1. **方法1**：访问官网查看模型列表
-2. **方法2**：程序运行时会在日志中显示可用模型
-3. **方法3**：访问 API：`GET https://gsv2p.acgnai.top/models/v4`
+- 这里的 `output_format` 表示生成音频本身的格式，会映射到 MiniMax 的 `audio_setting.format`
+- 插件内部固定请求 `hex` 响应，便于直接解码，不需要你再额外配置返回形式
 
+## GPT-SoVITS
 
-#### 重要提示
+当前适配器里的 `gptsovits` 兼容两种常见接法：
 
-**模型名称格式**：`游戏名-语言-角色名_后缀`
-- 必须完全匹配 API 返回的模型名称
-- 包括中文字符、下划线、后缀等都要一致
-- 如果模型名称错误会导致 TTS 合成失败
+- `POST /infer_classic`
+- `POST /infer_single`
 
-#### 故障排查
-
-如果出现"参数错误"或"模型不存在"：
-
-1. 检查日志中的模型列表，确认模型名称
-2. 确保 `api_token` 正确且有效
-3. 检查 `language` 和 `emotion` 是否与模型匹配
-
----
-
-### 3. SiliconFlow TTS
-
-**优点**：国内服务，速度快
-**缺点**：音色选择较少
-
-#### 配置步骤
-
-1. 访问：https://cloud.siliconflow.cn/
-2. 注册并获取 API 密钥：https://cloud.siliconflow.cn/account/ak
-3. 在 `config.toml` 中配置：
+如果你跑的是新版 GSV FastAPI，并且 WebUI 里需要选择 GPT 权重、SoVITS 权重、参考音频和参考文本，通常按 classic 这一套来配；如果你的服务更偏 GSVI / 模板模型形式，就直接填模板模型名和模板情感。
 
 ```toml
-[voice.siliconflow]
-api_key = "你的API密钥"  # SiliconFlow API 密钥
-api_base = "https://api.siliconflow.cn/v1"  # API 基础地址
-tts_model = "FunAudioLLM/CosyVoice2-0.5B"  # TTS 模型
-tts_voice = "FunAudioLLM/CosyVoice2-0.5B:alex"  # 语音音色
-response_format = "pcm"  # 音频格式（mp3, opus, wav, pcm）
-sample_rate = 48000      # 采样率（Hz）
-speed = 1.0              # 语速（0.25-4.0）
+[gptsovits_tts]
+api_base = "http://127.0.0.1:8000"
+version = "v4"
+gpt_model_name = "GPT_weights_v2ProPlus/hiyohiyo-e10.ckpt"
+sovits_model_name = "SoVITS_weights_v2ProPlus/hiyohiyo_e4_s264.pth"
+model = ""
+voice = ""
+text_lang = "zh"
+ref_audio_path = "D:/gsv_refs/hiyohiyo.wav"
+prompt_text = "这是参考音频对应的文本"
+prompt_lang = "zh"
+response_format = "wav"
+speed_factor = 1.0
 ```
 
-#### 可用音色
+注意：
 
-```
-alex, anna, bella, benjamin, charles, claire, david, diana
-```
-详情请见siliconflow的api[文档](https://docs.siliconflow.cn/cn/api-reference/audio/voice-list)
----
+- `gpt_model_name` 和 `sovits_model_name` 要填你 GSV 当前已经加载的模型名，不是随便写
+- `model` 填 `/models/{version}` 返回的模板模型名；如果服务端只有一个模型，可以留空让适配器自动选择
+- `voice` 填模板模型下的情感或音色，例如 `默认`；如果只有一个可选项，也可以留空
+- `ref_audio_path` 是服务端能访问到的路径；如果你的 GSV 要先上传文件，再把返回路径填进来，也按服务端实际路径处理
+- `prompt_text` 是参考音频里的原文，不是你当前要合成的文本
+- `response_format` 推荐先用 `wav`
 
-## STT 提供商配置
+## 当前适配器对 GSV 的处理方式
 
-### 1. Azure STT
+适配器当前按下面的顺序处理：
 
-使用与 TTS 相同的 Azure 配置：
+- 如果你明确填写了 `model`，优先走模板模型接口，请求 `/infer_single`
+- 如果你没有填写 `model`，并且 classic 权重已经配齐，优先请求 `/infer_classic`
+- 如果 classic 权重没配完整，运行时会直接尝试 `/infer_single` 自动发现模板模型
+- 如果 classic 请求失败，运行时会记录失败原因，再尝试 `/infer_single` 作为兜底
+- 如果 `/models/{version}` 返回多个模板模型，而你又没有显式填写 `model`，运行时不会乱猜，会在日志里提示你手动指定
 
-```toml
-[voice.azure]
-subscription_key = "你的订阅密钥"
-region = "eastus"
-stt_language = "zh-CN"  # 识别语言
-```
+如果接口直接返回音频流，适配器会直接播放。
+如果接口返回的是输出路径，适配器会继续请求 `/outputs/{result_path}` 下载音频。
 
-支持的语言：`zh-CN`, `en-US`, `ja-JP` 等
+## 排障建议
 
----
+如果 GSV 播报失败，优先检查：
 
-### 2. Aliyun STT
+- `voice.enabled` 是否为 `true`
+- `voice.tts_provider` 是否为 `gptsovits`
+- `gptsovits_tts.api_base` 是否真的指向 GSV API，而不是只指向 WebUI 页面
+- `gpt_model_name` / `sovits_model_name` 是否和 GSV 当前加载值一致
+- `model` / `voice` 是否和 `/models/{version}` 返回内容一致
+- `ref_audio_path` 是否是服务端机器上真实可访问的路径
+- GSV 服务返回的是音频流，还是输出文件路径
 
-#### 配置步骤
+如果你看到插件日志里出现：
 
-1. 访问阿里云：https://www.aliyun.com/
-2. 开通智能语音交互服务
-3. 获取 AccessKey 和 AppKey
-4. 在 `config.toml` 中配置：
-
-```toml
-[voice.aliyun]
-access_key_id = "你的AccessKeyId"
-access_key_secret = "你的AccessKeySecret"
-app_key = "你的AppKey"
-```
-
----
-
-### 3. SiliconFlow STT
-
-使用与 TTS 相同的配置：
-
-```toml
-[voice.siliconflow]
-api_key = "你的API密钥"
-stt_model = "FunAudioLLM/SenseVoiceSmall"  # STT 模型
-```
-
----
-
-## 故障排查
-
-### TTS 相关问题
-
-#### 错误：TTS 合成失败
-
-**可能原因**：
-- API 密钥错误或过期
-- 模型名称不正确
-- 网络连接问题
-- 配额不足
-
-**解决方法**：
-1. 检查日志中的具体错误信息
-2. 验证 API 密钥是否正确
-3. 对于 AI Hobbyist，确认模型名称完全匹配
-4. 检查网络连接和防火墙设置
-
-#### 错误：参数错误（AI Hobbyist）
-
-```
-TTS 参数错误: 模型=xxx, 语言=xxx, 语气=xxx
-```
-
-**解决方法**：
-1. 查看日志中的 "可用模型示例"
-2. 确保模型名称与 API 返回的完全一致
-3. 检查语言和语气参数是否与模型匹配
-
----
-
-### STT 相关问题
-
-#### 错误：无法识别语音
-
-**可能原因**：
-- 用户麦克风静音
-- FFmpeg 未安装
-- 音频格式不支持
-
-**解决方法**：
-1. 确认用户已取消静音
-2. 安装 FFmpeg：https://ffmpeg.org/download.html
-3. 检查日志中的音频处理信息
-
----
-
-### 连接问题
-
-#### Bot 无法连接到语音频道
-
-**检查**：
-1. Bot 是否有连接语音频道的权限
-2. 频道 ID 是否正确
-3. Discord intents 是否启用 `voice_states`
-
-```toml
-[discord.intents]
-voice_states = true  # 必须启用
-```
-
----
-
-## 相关链接
-
-- **Azure 语音服务**：https://azure.microsoft.com/zh-cn/services/cognitive-services/speech-services/
-- **AI Hobbyist TTS**：https://tts.acgnai.top/
-- **SiliconFlow**：https://cloud.siliconflow.cn/
-- **FFmpeg 下载**：https://ffmpeg.org/download.html
-- **Discord 开发者文档**：https://discord.com/developers/docs
-
----
-
-
-如有问题，请查看项目 GitHub Issues 或联系开发者。
-
-aihobbyist在线语音推理相关作者鸣谢:
-        GPT-SoVITS开发者：@花儿不哭
-        模型训练者：@红血球AE3803 @白菜工厂1145号员工
-        推理特化包适配 & 在线推理：@AI-Hobbyist
+- `classic mode requires gpt_model_name and sovits_model_name`
+  说明你的 classic 配置里模型名没填；新版本会继续尝试 infer_single 自动发现
+- `infer_single target resolved`
+  说明你当前显式启用了模板模型模式，适配器已经从 `/models/{version}` 成功解析出模板模型、语言和情感
+- `classic synthesis failed; falling back to infer_single`
+  说明 classic 本身没跑通，适配器已经开始切到模板模型链路兜底
+- `synthesis recovered via fallback mode: infer_single`
+  说明最终是通过 infer_single 兜底成功拿到了音频
+- `response could not be parsed as audio`
+  说明服务返回格式和适配器预期不一致，需要把实际响应体抓出来再对

@@ -1,34 +1,51 @@
 {
-  "manifest_version": 1,
-  "name": "Discord适配器",
+  "manifest_version": 2,
   "version": "1.0.0",
-  "description": "如题;注:使用该插件时建议重启,该插件有自动安装依赖可以直接在终端确认安装;细则行为可以查看readme",
+  "name": "discord_adapter",
+  "description": "Discord platform adapter for MaiBot with duplex gateway support for Guild, DM, Thread, reaction, and voice routing.",
   "author": {
     "name": "litroenade",
     "url": "https://github.com/2829798842"
   },
-  "license": "GPL-3.0",
-  "host_application": {
-    "min_version": "0.8.0"
+  "license": "GPL-v3.0",
+  "urls": {
+    "repository": "https://github.com/litroenade/MaiBot-Discord-Adapter",
+    "homepage": "https://github.com/litroenade/MaiBot-Discord-Adapter",
+    "documentation": "https://github.com/litroenade/MaiBot-Discord-Adapter",
+    "issues": "https://github.com/litroenade/MaiBot-Discord-Adapter/issues"
   },
-  "homepage_url": "https://github.com/2829798842/MaiBot-Discord-Adapter",
-  "repository_url": "https://github.com/2829798842/MaiBot-Discord-Adapter",
-  "keywords": [
-    "discord",
-    "adapter",
-    "platform",
-    "voice"
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.0.0"
+  },
+  "sdk": {
+    "min_version": "2.0.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [
+    {
+      "type": "python_package",
+      "name": "discord.py",
+      "version_spec": ">=2.3.0"
+    },
+    {
+      "type": "python_package",
+      "name": "discord-ext-voice-recv",
+      "version_spec": ">=0.4.1a139"
+    },
+    {
+      "type": "python_package",
+      "name": "PyNaCl",
+      "version_spec": ">=1.5.0"
+    }
   ],
-  "categories": [
-    "Platform Adapter"
-  ],
-  "default_locale": "zh-CN",
-  "plugin_info": {
-    "is_built_in": false,
-    "plugin_type": "platform_adapter",
-    "features": [
-      "Discord 各种消息收发"
+  "capabilities": [],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "supported_locales": [
+      "zh-CN",
+      "en-US"
     ]
   },
-  "id": "MaiBot-Discord-Adapter"
+  "id": "maibot-discord-adapter"
 }

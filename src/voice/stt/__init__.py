@@ -1,3 +1,11 @@
-"""STT 提供商实现集合"""
+"""STT 提供商实现。"""
 
-__all__: list[str] = []
+from .aliyun_stt import AliyunSTTProvider
+from .siliconflow_stt import SiliconFlowSTTProvider
+from .tencent_stt import TencentSTTProvider
+
+__all__ = [
+    "AliyunSTTProvider",
+    "SiliconFlowSTTProvider",
+    "TencentSTTProvider",
+]

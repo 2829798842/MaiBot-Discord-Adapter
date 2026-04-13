@@ -1,11 +1,7 @@
-"""TTS 提供商实现集合。"""
+"""TTS 提供商实现。"""
 
-from .ai_hobbyist_tts import AITTSProvider
-from .azure_tts import AzureTTSProvider
+from .gptsovits_tts import GPTSoVITSTTSProvider
+from .minimax_tts import MiniMaxTTSProvider
 from .siliconflow_tts import SiliconFlowTTSProvider
 
-__all__ = [
-	"AITTSProvider",
-	"AzureTTSProvider",
-	"SiliconFlowTTSProvider",
-]
+__all__ = ["GPTSoVITSTTSProvider", "MiniMaxTTSProvider", "SiliconFlowTTSProvider"]

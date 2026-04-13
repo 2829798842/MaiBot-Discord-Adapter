@@ -1,638 +1,606 @@
-"""模块名称：Discord 客户端管理器
-主要功能：管理 Discord Bot 客户端连接和事件处理
+"""Discord 客户端管理器。
+
+管理 Discord Bot 客户端连接、事件处理、连接监控和 Reaction 事件绑定。
 """
 
 import asyncio
-import time
 import traceback
-from importlib import import_module
-from typing import Optional
+from time import time as get_time
+from typing import Any, Dict, Optional
 
 import discord
-from maim_message import (
-    BaseMessageInfo,
-    FormatInfo,
-    GroupInfo,
-    MessageBase,
-    Seg,
-    UserInfo,
-)
 
-from ..logger import logger
-from ..config import global_config, is_user_allowed
-from ..mmc_com_layer import router
+from ..send_handler.thread_send_handler import ThreadRoutingManager
+from .message_handler import DiscordMessageHandler
+
 
 class DiscordClientManager:
-    """Discord 客户端管理器
-    
-    负责管理 Discord Bot 的连接、事件处理和消息队列
-    
-    Attributes:
-        client (discord.Client | None): Discord 客户端实例
-        message_queue (asyncio.Queue): 消息队列
-        is_connected (bool): 连接状态
-        is_shutting_down (bool): 是否正在关闭
-        is_reconnecting (bool): 是否正在重连
+    """Discord 客户端管理器。
+
+    构造时接收所有外部依赖，不使用任何全局状态。
+    内置连接健康监控和 Reaction 事件动态绑定。
     """
 
-    def __init__(self):
-        """初始化 Discord 客户端管理器"""
-        self.client = None
-        self.message_queue = asyncio.Queue()
-        self.is_connected = False
-        self.is_shutting_down = False
-        self.is_reconnecting = False
-        self._reconnect_task = None
-        self.voice_manager = None  # 语音管理器（将在启动时初始化）
+    def __init__(
+        self,
+        *,
+        logger: Any,
+        token: str,
+        intents_config: Dict[str, bool],
+        gateway_name: str,
+        gateway_capability: Any,
+        message_handler: DiscordMessageHandler,
+        thread_routing_manager: ThreadRoutingManager,
+        chat_filter: Any,
+        filter_config: Any,
+        connection_check_interval: int = 30,
+        retry_delay: int = 5,
+    ) -> None:
+        """初始化管理器状态并创建 Discord 客户端与事件绑定。
+
+        Args:
+            logger: 日志记录器。
+            token: Discord Bot 登录令牌。
+            intents_config: 各 Gateway Intent 的开关配置（如 guild_messages、dm_messages、
+                reactions 等）。
+            gateway_name: 当前网关在路由层使用的名称。
+            gateway_capability: 网关能力对象，用于将消息路由到 Host。
+            message_handler: 入站消息处理器，负责 Discord 消息到 Host 结构的转换。
+            thread_routing_manager: 子区/线程路由管理器，需与客户端实例绑定。
+            chat_filter: 频道与用户维度的入站过滤逻辑。
+            filter_config: 过滤相关配置（如是否忽略自身或机器人消息）。
+            connection_check_interval: 连接健康监控的检查间隔（秒）。
+            retry_delay: 启动或重连失败后的重试等待时间（秒）。
+        """
+        self._logger = logger
+        self._token = token
+        self._intents_config = intents_config
+        self._gateway_name = gateway_name
+        self._gateway_capability = gateway_capability
+        self._message_handler = message_handler
+        self._thread_routing_manager = thread_routing_manager
+        self._chat_filter = chat_filter
+        self._filter_config = filter_config
+        self._connection_check_interval = connection_check_interval
+        self._retry_delay = retry_delay
+
+        self.client: Optional[discord.Client] = None
+        self.is_connected: bool = False
+        self.is_shutting_down: bool = False
+        self.is_reconnecting: bool = False
+
+        self._monitor_task: Optional[asyncio.Task[None]] = None
+        self._reconnect_task: Optional[asyncio.Task[None]] = None
+
+        self._registered_reaction_client_id: Optional[int] = None
+        self._last_health_check: float = 0
+        self._health_check_interval: float = 60
+        self._health_check_failures: int = 0
+
+        self._on_connected_callback: Optional[Any] = None
+        self._on_disconnected_callback: Optional[Any] = None
+
+        self.voice_manager: Optional[Any] = None
+
         self._setup_client()
 
-    def _setup_client(self):
-        """设置 Discord 客户端
-        
-        配置 Discord 客户端的权限意图并注册事件处理器
+    def set_lifecycle_callbacks(
+        self,
+        on_connected: Any = None,
+        on_disconnected: Any = None,
+    ) -> None:
+        """注册连接就绪与断开时的生命周期回调。
+
+        Args:
+            on_connected: 连接就绪或恢复时调用的异步回调，可为 None。
+            on_disconnected: 连接断开时调用的异步回调，可为 None。
         """
+        self._on_connected_callback = on_connected
+        self._on_disconnected_callback = on_disconnected
+
+    def _setup_client(self) -> None:
+        """根据配置创建 `discord.Client`、绑定路由并注册各类事件处理器。"""
         intents = discord.Intents.default()
-        discord_intents = global_config.discord.intents
+        guild_messages = self._intents_config.get("guild_messages")
+        if guild_messages is None:
+            # 兼容旧映射键，避免历史配置或旧调用方直接传入 messages 时失效。
+            guild_messages = self._intents_config.get("messages", True)
 
-        intents.messages = discord_intents.get("messages", True)
-        intents.guilds = discord_intents.get("guilds", True)
-        intents.dm_messages = discord_intents.get("dm_messages", True)
-        intents.message_content = discord_intents.get("message_content", True)
-        intents.reactions = discord_intents.get("reactions", True)
-        intents.voice_states = discord_intents.get("voice_states", False)
+        intents.guild_messages = bool(guild_messages)
+        intents.guilds = self._intents_config.get("guilds", True)
+        intents.dm_messages = self._intents_config.get("dm_messages", True)
+        intents.message_content = self._intents_config.get("message_content", True)
+        intents.reactions = self._intents_config.get("reactions", True)
+        intents.voice_states = self._intents_config.get("voice_states", False)
 
-        logger.debug(
-            f"Discord 权限意图: messages={intents.messages}, guilds={intents.guilds}, "
-            f"dm_messages={intents.dm_messages}, message_content={intents.message_content}, "
-            f"reactions={intents.reactions}, voice_states={intents.voice_states}"
-        )
+        client = discord.Client(intents=intents)
+        self.client = client
+        self._thread_routing_manager.bind_client(client)
 
-        # 创建 Discord 客户端
-        self.client = discord.Client(intents=intents)
-
-        # 使用装饰器方式注册事件处理器
-        @self.client.event
-        async def on_ready():
+        @client.event
+        async def on_ready() -> None:
             await self._on_ready()
 
-        @self.client.event
-        async def on_message(message):
+        @client.event
+        async def on_message(message: discord.Message) -> None:
             await self._on_message(message)
 
-        @self.client.event
-        async def on_error(event, *args, **kwargs):
-            await self._on_error(event, *args, **kwargs)
+        @client.event
+        async def on_error(event: str, *args: Any, **kwargs: Any) -> None:
+            self._logger.error(f"Discord 事件 {event} 发生错误")
 
-        @self.client.event
-        async def on_disconnect():
-            await self._on_disconnect()
+        @client.event
+        async def on_disconnect() -> None:
+            self.is_connected = False
+            self._logger.warning("Discord 客户端连接断开")
+            if self._on_disconnected_callback:
+                try:
+                    await self._on_disconnected_callback()
+                except Exception:
+                    pass
 
-        @self.client.event
-        async def on_resume():
-            await self._on_resume()
+        @client.event
+        async def on_resume() -> None:
+            self.is_connected = True
+            self._logger.info("Discord 客户端连接已恢复")
+            if self._on_connected_callback:
+                try:
+                    await self._on_connected_callback()
+                except Exception:
+                    pass
 
-        @self.client.event
-        async def on_voice_state_update(member, before, after):
-            await self._on_voice_state_update(member, before, after)
+        @client.event
+        async def on_voice_state_update(
+            member: discord.Member,
+            before: discord.VoiceState,
+            after: discord.VoiceState,
+        ) -> None:
+            if self.voice_manager:
+                try:
+                    await self.voice_manager.on_voice_state_update(member, before, after)
+                except Exception as exc:
+                    self._logger.error(f"语音状态更新处理失败: {exc}")
 
-        logger.debug("Discord 客户端初始化完成")
-
-    async def _on_ready(self):
-        """Discord 客户端就绪事件处理器
-        
-        当 Discord 客户端连接成功并准备就绪时调用
-        """
+    async def _on_ready(self) -> None:
+        """Gateway 就绪时更新连接状态、记录日志、注册 Reaction 并触发连接回调。"""
         self.is_connected = True
-        logger.info(f"Discord 客户端已连接: {self.client.user}")
-        logger.info(f"Bot 已加入 {len(self.client.guilds)} 个服务器")
+        client = self.client
+        if client is None:
+            return
+        self._logger.info(f"Discord 客户端已连接: {client.user}")
+        self._logger.info(f"Bot 已加入 {len(client.guilds)} 个服务器")
 
-        # 显示加入的服务器信息
-        for guild in self.client.guilds:
-            logger.debug(f"服务器: {guild.name} (ID: {guild.id})")
-            # 显示前几个频道
-            text_channels = guild.text_channels[:3]  # 只显示前3个频道
-            for channel in text_channels:
-                logger.debug(f"  - 频道: {channel.name} (ID: {channel.id})")
+        self._register_reaction_events()
 
-        logger.info("Discord 客户端准备就绪，等待消息事件...")
-
-        # 初始化语音功能
-        await self._initialize_voice()
-
-    async def _initialize_voice(self):
-        """初始化语音功能"""
-        try:
-            voice_config = global_config.voice
-            if not voice_config.enabled:
-                logger.debug("语音功能未启用")
-                return
-
-            # 动态导入语音模块
+        if self._on_connected_callback:
             try:
-                voice_pkg = import_module("src.voice")
-                voice_manager_cls = voice_pkg.VoiceManager
+                await self._on_connected_callback()
+            except Exception as exc:
+                self._logger.warning(f"连接就绪回调执行失败: {exc}")
 
-                azure_tts_module = import_module("src.voice.tts.azure_tts")
-                azure_tts_cls = azure_tts_module.AzureTTSProvider
+    async def _on_message(self, message: discord.Message) -> None:
+        """处理入站频道/DM 消息：过滤后转换为 Host 结构并路由，必要时更新子区上下文。
 
-                azure_stt_module = import_module("src.voice.stt.azure_stt")
-                azure_stt_cls = azure_stt_module.AzureSTTProvider
-
-                ai_hobbyist_tts_module = import_module("src.voice.tts.ai_hobbyist_tts")
-                ai_hobbyist_tts_cls = ai_hobbyist_tts_module.AITTSProvider
-
-                aliyun_stt_module = import_module("src.voice.stt.aliyun_stt")
-                aliyun_stt_cls = aliyun_stt_module.AliyunSTTProvider
-
-                siliconflow_tts_module = import_module("src.voice.tts.siliconflow_tts")
-                siliconflow_tts_cls = siliconflow_tts_module.SiliconFlowTTSProvider
-
-                siliconflow_stt_module = import_module("src.voice.stt.siliconflow_stt")
-                siliconflow_stt_cls = siliconflow_stt_module.SiliconFlowSTTProvider
-            except (ImportError, AttributeError) as import_err:
-                logger.warning(f"语音模块导入失败，跳过语音功能: {import_err}")
-                logger.info("提示：如需使用语音功能，请安装依赖")
-                return
-
-            # 初始化 TTS 提供商
-            tts_provider = None
-            try:
-                if voice_config.tts_provider == "azure":
-                    tts_provider = azure_tts_cls(config=voice_config.azure)
-                    logger.debug(f"TTS 提供商已初始化: Azure ({voice_config.azure.tts_voice})")
-                elif voice_config.tts_provider == "ai_hobbyist":
-                    tts_provider = ai_hobbyist_tts_cls(config=voice_config.ai_hobbyist)
-                    logger.debug(
-                        f"TTS 提供商已初始化: AI Hobbyist TTS ({voice_config.ai_hobbyist.model_name})"
-                    )
-                elif voice_config.tts_provider == "siliconflow":
-                    tts_provider = siliconflow_tts_cls(config=voice_config.siliconflow)
-                    logger.debug(f"TTS 提供商已初始化: SiliconFlow ({voice_config.siliconflow.tts_model})")
-            except Exception as e:  # pylint: disable=broad-except
-                logger.warning(f"TTS 提供商初始化失败: {e}")
-
-            # 初始化 STT 提供商
-            stt_provider = None
-            try:
-                if voice_config.stt_provider == "azure":
-                    stt_provider = azure_stt_cls(config=voice_config.azure)
-                    logger.debug(f"STT 提供商已初始化: Azure ({voice_config.azure.stt_language})")
-                elif voice_config.stt_provider == "aliyun":
-                    stt_provider = aliyun_stt_cls(config=voice_config.aliyun)
-                    logger.debug("STT 提供商已初始化: Aliyun")
-                elif voice_config.stt_provider == "siliconflow":
-                    stt_provider = siliconflow_stt_cls(config=voice_config.siliconflow)
-                    logger.debug(f"STT 提供商已初始化: SiliconFlow ({voice_config.siliconflow.stt_model})")
-            except Exception as e:  # pylint: disable=broad-except
-                logger.warning(f"STT 提供商初始化失败: {e}")
-
-            # 创建语音管理器
-            self.voice_manager = voice_manager_cls(
-                bot=self.client,
-                config=voice_config,
-                tts_provider=tts_provider,
-                stt_provider=stt_provider
-            )
-
-            if stt_provider:
-                self.voice_manager.set_stt_callback(self._handle_stt_result)
-
-            # 启动语音管理器
-            await self.voice_manager.start()
-            logger.info("语音功能已启动")
-
-        except ImportError as e:
-            logger.warning(f"导入语音模块失败，跳过语音功能: {e}")
-        except Exception as e:  # pylint: disable=broad-except
-            logger.error(f"初始化语音功能失败: {e}")
-
-    async def _handle_stt_result(self, member: discord.Member, text: str) -> None:
-        """将语音识别结果转发到 MaiBot Core"""
-        timestamp = time.time()
-
-        # 构造用户信息
-        user_info = UserInfo(
-            platform=global_config.maibot_server.platform_name,
-            user_id=str(member.id),
-            user_nickname=member.display_name,
-            user_cardname=getattr(member, "nick", None),
-        )
-
-        # 尝试定位所属频道
-        voice_state = getattr(member, "voice", None)
-        channel = getattr(voice_state, "channel", None)
-        if channel is None and self.voice_manager and self.voice_manager.voice_client:
-            channel = getattr(self.voice_manager.voice_client, "channel", None)
-
-        group_info = None
-        if channel and getattr(channel, "guild", None):
-            guild_name = channel.guild.name
-            group_info = GroupInfo(
-                platform=global_config.maibot_server.platform_name,
-                group_id=str(channel.id),
-                group_name=f"{channel.name} (Voice) @ {guild_name}",
-            )
-
-        format_info = FormatInfo(
-            content_format=["text"],
-            accept_format=["text", "image", "emoji", "reply", "voice", "command", "file", "video"],
-        )
-
-        message_info = BaseMessageInfo(
-            platform=global_config.maibot_server.platform_name,
-            message_id=f"voice-{member.id}-{int(timestamp * 1000)}",
-            time=timestamp,
-            user_info=user_info,
-            group_info=group_info,
-            format_info=format_info,
-        )
-
-        message = MessageBase(
-            message_info=message_info,
-            message_segment=Seg(type="text", data=text),
-            raw_message=text,
-        )
-
-        try:
-            await router.send_message(message)
-            logger.info(
-                "已转发语音识别结果到 MaiCore: user=%s, channel=%s",
-                member.id,
-                getattr(channel, "id", None),
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.error(f"发送语音识别结果到 MaiCore 失败: {exc}")
-
-    async def _on_voice_state_update(
-        self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
-        ):
-        """语音状态更新事件处理器"""
-        if self.voice_manager:
-            await self.voice_manager.on_voice_state_update(member, before, after)
-
-    async def _on_error(self, event: str, *args, **kwargs):
-        """Discord 客户端错误事件处理器
-        
         Args:
-            event: 发生错误的事件名称
-            *args: 事件参数
-            **kwargs: 事件关键字参数
-        """
-        logger.error(f"Discord 事件 {event} 发生错误: {args}, {kwargs}")
-
-    async def _on_disconnect(self):
-        """Discord 客户端断开连接事件处理器"""
-        self.is_connected = False
-        logger.warning("Discord 客户端连接断开")
-
-    async def _on_resume(self):
-        """Discord 客户端重新连接事件处理器"""
-        self.is_connected = True
-        logger.info("Discord 客户端连接已恢复")
-
-    async def _on_message(self, message: discord.Message):
-        """Discord 消息事件处理器
-        
-        处理接收到的 Discord 消息，进行基本过滤后放入消息队列
-        
-        Args:
-            message: Discord 消息对象
+            message: Discord 推送的 `Message` 对象。
         """
         try:
-            # 详细的消息来源信息
-            channel_info = (f"频道: {message.channel.name}"
-                           if hasattr(message.channel, 'name') else "私信频道")
-            guild_info = f"服务器: {message.guild.name}" if message.guild else "私信"
-
-            logger.debug("收到消息事件:")
-            logger.debug(f"  消息ID: {message.id}")
-            logger.debug(f"  作者: {message.author.display_name} (ID: {message.author.id})")
-            logger.debug(f"  内容: '{message.content}'")
-            logger.debug(f"  {channel_info} (ID: {message.channel.id})")
-            logger.debug(f"  {guild_info} (ID: {message.guild.id if message.guild else 'N/A'})")
-            logger.debug(f"  消息类型: {type(message.channel).__name__}")
-
-            # 忽略机器人自己发送的消息
             bot_user = getattr(self.client, "user", None)
-
             if bot_user and message.author.id == bot_user.id:
-                logger.debug("忽略机器人自己发送的消息")
-                return
+                if getattr(self._filter_config, "ignore_self_message", True):
+                    return
 
             if message.author.bot:
-                logger.debug("暂不影响，等待后续更新")
+                if getattr(self._filter_config, "ignore_bot_message", True):
+                    return
 
-            # 检查黑白名单
-            guild_id = message.guild.id if message.guild else None
-            channel_id = message.channel.id
-
-            # 检查是否为子区消息
-            is_thread_message = (
-                hasattr(message.channel, 'parent')
-                and message.channel.parent is not None
-            )
-            thread_id = None
-
-            if is_thread_message:
-                thread_id = message.channel.id  # 子区ID
-                # 对于子区消息，如果继承父频道权限，则使用父频道ID进行权限检查
-                if global_config.chat.inherit_channel_permissions:
-                    channel_id = message.channel.parent.id if message.channel.parent else channel_id
-                    logger.debug(f"子区消息继承父频道权限: 子区ID={thread_id}, 父频道ID={channel_id}")
-                else:
-                    logger.debug(f"子区消息使用独立权限: 子区ID={thread_id}")
-
-            logger.debug(
-                f"权限检查: 用户ID={message.author.id}, 服务器ID={guild_id}, "
-                f"频道ID={channel_id}, 子区ID={thread_id}, 是否子区={is_thread_message}"
+            guild_id = str(message.guild.id) if message.guild else None
+            channel_id = str(message.channel.id)
+            channel_type = type(message.channel).__name__
+            is_voice_chat_message = isinstance(
+                message.channel, (discord.VoiceChannel, discord.StageChannel)
             )
 
-            if not is_user_allowed(
-                global_config,
-                message.author.id,
-                guild_id,
-                channel_id,
-                thread_id,
-                is_thread_message,
+            is_thread = hasattr(message.channel, "parent") and message.channel.parent is not None
+            thread_id = str(message.channel.id) if is_thread else None
+
+            if is_voice_chat_message:
+                self._logger.info(
+                    "Received Discord voice-channel chat message "
+                    f"[message_id={message.id}, guild_id={guild_id}, channel_id={channel_id}, "
+                    f"channel={getattr(message.channel, 'name', 'unknown')}, author_id={message.author.id}, "
+                    f"channel_type={channel_type}, chars={len(message.content or '')}]"
+                )
+            else:
+                self._logger.debug(
+                    "Received Discord message "
+                    f"[message_id={message.id}, guild_id={guild_id}, channel_id={channel_id}, "
+                    f"channel_type={channel_type}, author_id={message.author.id}, "
+                    f"chars={len(message.content or '')}]"
+                )
+
+            check_channel_id = channel_id
+            if is_thread:
+                inherit_perms = getattr(
+                    self._chat_filter._config, "inherit_channel_permissions", True
+                ) if self._chat_filter._config else True
+                if inherit_perms and message.channel.parent:
+                    check_channel_id = str(message.channel.parent.id)
+
+            if not self._chat_filter.is_allowed(
+                user_id=str(message.author.id),
+                guild_id=guild_id,
+                channel_id=check_channel_id,
+                thread_id=thread_id,
+                is_thread=is_thread,
             ):
-                if is_thread_message:
-                    logger.warning(f"用户 {message.author.id} 或子区 {thread_id} 不在允许列表中，忽略消息")
-                else:
-                    logger.warning(f"用户 {message.author.id} 或频道 {channel_id} 不在允许列表中，忽略消息")
+                if is_voice_chat_message:
+                    self._logger.warning(
+                        "Ignored Discord voice-channel chat message because it was blocked by chat filter "
+                        f"[message_id={message.id}, channel_id={channel_id}, check_channel_id={check_channel_id}]"
+                    )
                 return
 
-            # 将消息放入队列等待处理
-            await self.message_queue.put(message)
-            logger.debug(f"成功将 Discord 消息放入队列: {message.id}, 队列大小: {self.message_queue.qsize()}")
+            message_dict = await self._message_handler.handle_discord_message(message)
+            if message_dict is None:
+                return
 
-        except (AttributeError, TypeError, RuntimeError) as e:
-            logger.error(f"处理 Discord 消息时发生错误: {e}")
-            logger.error(f"错误详情: {traceback.format_exc()}")
+            await self._gateway_capability.route_message(
+                self._gateway_name,
+                message_dict,
+                external_message_id=str(message.id),
+                dedupe_key=str(message.id),
+            )
 
-    async def _reset_client(self):
+            routing_info = self._message_handler.get_thread_routing_info(message)
+            if routing_info:
+                if routing_info["is_inherit"]:
+                    self._thread_routing_manager.update_thread_context(
+                        routing_info["parent_channel_id"],
+                        routing_info["thread_id"],
+                    )
+                elif not routing_info["is_thread"]:
+                    pass
+            elif message.guild and not is_thread:
+                inherit_mem = getattr(
+                    self._message_handler._chat_config, "inherit_channel_memory", True
+                )
+                if inherit_mem:
+                    self._thread_routing_manager.clear_thread_context(str(message.channel.id))
+
+        except Exception as exc:
+            self._logger.error(f"处理 Discord 消息时发生错误: {exc}")
+            self._logger.debug(traceback.format_exc())
+
+
+    def _register_reaction_events(self) -> None:
+        """为当前客户端实例注册 raw reaction 事件（去重，避免重复绑定）。"""
+        client = self.client
+        if client is None:
+            return
+
+        current_client_id = id(client)
+        if self._registered_reaction_client_id == current_client_id:
+            return
+
+        @client.event
+        async def on_raw_reaction_add(payload: discord.RawReactionActionEvent) -> None:
+            await self._process_reaction_event("reaction_add", payload)
+
+        @client.event
+        async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent) -> None:
+            await self._process_reaction_event("reaction_remove", payload)
+
+        self._registered_reaction_client_id = current_client_id
+        self._logger.info("Reaction 事件处理器已注册到 Discord 客户端")
+
+    async def _process_reaction_event(
+        self, event_type: str, payload: discord.RawReactionActionEvent
+    ) -> None:
+        """解析 Reaction 事件、按频道规则过滤后转换为 Host 消息并路由。
+
+        Args:
+            event_type: 事件类型标识（如 reaction_add / reaction_remove）。
+            payload: Discord 提供的 `RawReactionActionEvent` 载荷。
         """
-        重置客户端连接
-        """
-        # 关闭现有连接
-        if self.client:
-            try:
-                if not self.client.is_closed():
-                    await self.client.close()
-                    logger.debug("旧客户端已关闭")
-            except Exception as e:  # pylint: disable=broad-except
-                logger.warning(f"关闭旧客户端时出错: {e}")
+        try:
+            if not self.client or not self.client.user:
+                return
+            if payload.user_id == self.client.user.id:
+                return
+
+            guild_id = str(payload.guild_id) if payload.guild_id else None
+            channel_id = str(payload.channel_id)
+
+            channel = self.client.get_channel(payload.channel_id)
+            if not channel:
+                try:
+                    channel = await self.client.fetch_channel(payload.channel_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    return
+
+            is_thread = isinstance(channel, discord.Thread)
+            thread_id = channel_id if is_thread else None
+
+            check_channel_id = channel_id
+            if is_thread:
+                inherit_perms = getattr(
+                    self._chat_filter._config, "inherit_channel_permissions", True
+                ) if self._chat_filter._config else True
+                if inherit_perms:
+                    parent = getattr(channel, "parent", None)
+                    if parent:
+                        check_channel_id = str(parent.id)
+
+            if not self._chat_filter.is_allowed(
+                user_id=str(payload.user_id),
+                guild_id=guild_id,
+                channel_id=check_channel_id,
+                thread_id=thread_id,
+                is_thread=is_thread,
+            ):
+                return
+
+            message_dict = await self._message_handler.handle_reaction_event(
+                event_type, payload, self.client
+            )
+            if message_dict is None:
+                return
+
+            unique_id = f"reaction_{payload.message_id}_{payload.user_id}_{event_type}"
+            await self._gateway_capability.route_message(
+                self._gateway_name,
+                message_dict,
+                external_message_id=unique_id,
+                dedupe_key=unique_id,
+            )
+
+        except Exception as exc:
+            self._logger.error(f"处理 {event_type} 事件时发生错误: {exc}")
+            self._logger.debug(traceback.format_exc())
 
 
-        # 重新创建客户端
-        self._setup_client()
+    async def start(self) -> None:
+        """在关闭标志未置位时循环尝试启动客户端，使用 `client.start` 阻塞直至断开或致命错误。"""
+        self._logger.info(f"正在启动 Discord 客户端... (重试间隔: {self._retry_delay}s)")
 
-        # 标记为未连接
-        self.is_connected = False
-
-        logger.info("Discord客户端已重置")
-
-    async def start(self):
-        """启动 Discord 客户端
-        
-        Raises:
-            Exception: 当启动失败时抛出异常
-        """
-        # 获取重试配置
-        retry_config = global_config.discord.retry
-        retry_delay = retry_config.get('retry_delay', 5)
-
-        logger.info(f"正在启动 Discord 客户端... (重试间隔: {retry_delay}s)")
-
-        last_error = None
         attempt = 0
-        while True:
+        while not self.is_shutting_down:
             try:
                 if attempt > 0:
-                    logger.info(f"第 {attempt} 次重试启动 Discord 客户端...")
-                    # 等待重试间隔
-                    await asyncio.sleep(retry_delay)
-
-                    # 重置客户端（避免连接状态问题）
+                    self._logger.info(f"第 {attempt} 次重试启动 Discord 客户端...")
+                    await asyncio.sleep(self._retry_delay)
                     await self._reset_client()
 
-                # 直接启动客户端，让background_tasks处理连接监控
-                logger.debug("开始尝试连接到Discord...")
-                await self.client.start(global_config.discord.token)
+                if self.client is None:
+                    self._setup_client()
+                await self.client.start(self._token)  # type: ignore[union-attr]
+                self._logger.warning("Discord 客户端连接意外断开")
+                break
 
-                # 如果执行到这里，说明连接断开了
-                logger.warning("Discord 客户端连接意外断开")
-                last_error = None
-                break  # 正常断开不需要重试
-
-            except (discord.LoginFailure, discord.HTTPException) as e:
-                last_error = str(e)
-                logger.warning(f"第 {attempt + 1} 次尝试失败: {last_error}")
-
-                # 检查是否是Token错误
-                error_text = last_error.lower()
-                if any(keyword in error_text for keyword in ("login", "token", "unauthorized")):
-                    logger.error("Token 相关错误，请检查 Discord Bot Token 是否正确")
+            except (discord.LoginFailure, discord.HTTPException) as exc:
+                error_text = str(exc).lower()
+                if any(kw in error_text for kw in ("login", "token", "unauthorized")):
+                    self._logger.error("Token 相关错误，请检查插件配置中的 connection.token")
                     raise
+                self._logger.warning(f"第 {attempt + 1} 次尝试失败: {exc}")
 
-            except (ConnectionError, TimeoutError, OSError) as e:
-                last_error = str(e)
-                logger.warning(f"第 {attempt + 1} 次尝试失败: {last_error}")
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                self._logger.warning(f"第 {attempt + 1} 次尝试失败: {exc}")
 
-                # 记录详细错误信息
-                if "信号灯超时" in str(e) or "timeout" in str(e).lower():
-                    logger.warning("检测到网络超时，可能是网络连接问题或DNS拦截")
-                elif "ssl" in str(e).lower():
-                    logger.warning("检测到SSL错误，可能是证书问题或网络拦截")
-                elif "name resolution" in str(e).lower() or "dns" in str(e).lower():
-                    logger.warning("检测到DNS解析问题，可能是网络拦截或DNS污染")
-
-                attempt += 1
-                continue
-
-            except Exception as e:  # pylint: disable=broad-except
-                last_error = str(e)
-                logger.error(f"第 {attempt + 1} 次尝试时发生未知错误: {last_error}")
-                attempt += 1
-                continue
+            except Exception as exc:
+                self._logger.error(f"第 {attempt + 1} 次尝试时发生未知错误: {exc}")
 
             attempt += 1
 
-        logger.info("Discord 客户端已停止运行")
-        return
-
-    async def stop(self):
-        """停止 Discord 客户端"""
+    async def stop(self) -> None:
+        """请求关闭：停止连接监控并关闭 Discord 客户端。"""
         self.is_shutting_down = True
+        self._stop_monitor()
 
-        # 停止语音管理器
-        if self.voice_manager:
-            await self.voice_manager.close()
-            logger.info("语音管理器已关闭")
-
-        # 关闭Discord客户端
         if self.client and not self.client.is_closed():
             await self.client.close()
-            logger.info("Discord 客户端已关闭")
+            self._logger.info("Discord 客户端已关闭")
 
-    async def force_reconnect(self):
-        """强制重连Discord客户端
-        
-        重连后会自动重新注册所有事件处理器。
-        """
-        if self.is_shutting_down:
-            logger.debug("系统正在关闭，跳过重连")
+    async def _reset_client(self) -> None:
+        """关闭旧客户端（若存在）、清空 Reaction 注册标记并重新 `_setup_client`。"""
+        if self.client and not self.client.is_closed():
+            try:
+                await self.client.close()
+            except Exception:
+                pass
+
+        self._registered_reaction_client_id = None
+        self._setup_client()
+        self.is_connected = False
+
+    async def force_reconnect(self) -> None:
+        """在非关闭且非重连中时强制关闭当前连接并后台启动 `_reconnect_loop`。"""
+        if self.is_shutting_down or self.is_reconnecting:
             return
 
-        # 防止重复重连
-        if self.is_reconnecting:
-            logger.debug("已有重连任务正在进行，跳过此次重连请求")
-            return
-
-        logger.info("强制重连Discord客户端...")
+        self._logger.info("强制重连 Discord 客户端...")
         self.is_reconnecting = True
 
         try:
-            # 标记为未连接
             self.is_connected = False
 
-            # 取消之前的重连任务（如果存在）
             if self._reconnect_task and not self._reconnect_task.done():
-                logger.debug("取消之前的重连任务")
                 self._reconnect_task.cancel()
                 try:
                     await self._reconnect_task
                 except asyncio.CancelledError:
                     pass
 
-            # 关闭现有连接（设置较短超时，避免卡住）
             if self.client and not self.client.is_closed():
                 try:
                     await asyncio.wait_for(self.client.close(), timeout=3.0)
-                    logger.info("Discord客户端连接已断开")
                 except asyncio.TimeoutError:
-                    logger.warning("关闭Discord客户端超时，强制继续")
+                    self._logger.warning("关闭 Discord 客户端超时，强制继续")
 
-            # 短暂等待确保连接完全关闭
             await asyncio.sleep(0.5)
-
-            # 重新创建客户端
             await self._reset_client()
-            logger.info("Discord客户端已重置，启动重连任务...")
+            self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
-            # 启动新的连接（异步进行，不阻塞监控任务）
-            self._reconnect_task = asyncio.create_task(self._reconnect_client())
-            logger.debug(f"重连任务已创建: {self._reconnect_task}")
-
-        except Exception as e:  # pylint: disable=broad-except
-            logger.error(f"强制重连时发生错误: {e}")
+        except Exception as exc:
+            self._logger.error(f"强制重连时发生错误: {exc}")
             self.is_connected = False
             self.is_reconnecting = False
-            logger.debug("force_reconnect异常，已重置is_reconnecting=False")
 
-    async def _reconnect_client(self):
-        """异步重连客户端"""
+    async def _reconnect_loop(self) -> None:
+        """后台重连循环：在关闭前反复尝试 `client.start`，认证失败则退出并清除重连标志。"""
         try:
-            # 获取重试配置
-            retry_config = global_config.discord.retry
-            retry_delay = retry_config.get('retry_delay', 5)
-
             attempt = 0
             while not self.is_shutting_down:
                 try:
                     if attempt > 0:
-                        logger.info(f"第 {attempt} 次重连尝试...")
-                        await asyncio.sleep(retry_delay)
-                        # 重要: 每次重连失败后必须重新创建client对象
-                        # Discord client只能start一次！
+                        await asyncio.sleep(self._retry_delay)
                         await self._reset_client()
-
-                    logger.debug("开始连接到Discord...")
-                    await self.client.start(global_config.discord.token)
-
-                    # 如果执行到这里，说明连接成功后又断开了
-                    logger.info("Discord连接已断开，准备重试")
+                    if self.client is None:
+                        self._setup_client()
+                    await self.client.start(self._token)  # type: ignore[union-attr]
                     self.is_connected = False
                     attempt += 1
-
-                except (discord.LoginFailure, discord.HTTPException) as e:
-                    logger.error(f"重连过程中出现认证错误，停止重连: {e}")
-                    return  # finally块会自动重置is_reconnecting
-
+                except (discord.LoginFailure, discord.HTTPException) as exc:
+                    self._logger.error(f"重连认证错误，停止: {exc}")
+                    return
                 except asyncio.CancelledError:
-                    logger.info("重连任务被取消")
-                    raise  # finally块会自动重置is_reconnecting
-
-                except Exception as e:  # pylint: disable=broad-except
-                    logger.warning(f"第 {attempt + 1} 次重连失败: {e}")
+                    raise
+                except Exception as exc:
+                    self._logger.warning(f"第 {attempt + 1} 次重连失败: {exc}")
                     attempt += 1
-                    continue
-
-            if not self.is_shutting_down:
-                logger.warning("重连循环结束，未能成功重连")
-
         except asyncio.CancelledError:
-            logger.info("重连任务被取消")
-            raise
-        except Exception as e:  # pylint: disable=broad-except
-            logger.error(f"重连过程中发生错误: {e}")
+            pass
         finally:
-            # 确保重置重连标志
             self.is_reconnecting = False
-            logger.debug("重连任务结束，is_reconnecting=False")
 
-    async def get_channel(self, channel_id: int) -> discord.abc.Messageable | None:
-        """获取频道对象
-        
-        Args:
-            channel_id: 频道 ID
-            
+
+    def start_monitor(self) -> None:
+        """若监控任务未在运行，则创建 `_connection_monitor_loop` 异步任务。"""
+        if self._monitor_task is not None and not self._monitor_task.done():
+            return
+        self._monitor_task = asyncio.create_task(self._connection_monitor_loop())
+
+    def _stop_monitor(self) -> None:
+        """取消连接监控任务（若仍在运行）。"""
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+
+    async def _connection_monitor_loop(self) -> None:
+        """等待首次连接就绪后，按固定间隔调用连接状态检查直至关闭或取消。"""
+        while not self.is_connected and not self.is_shutting_down:
+            await asyncio.sleep(2)
+
+        self._logger.info("Discord 连接监控已启动")
+
+        while not self.is_shutting_down:
+            try:
+                await asyncio.sleep(self._connection_check_interval)
+                if self.is_shutting_down:
+                    break
+                await self._check_connection_status()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._logger.error(f"连接监控异常: {exc}")
+
+        self._logger.debug("连接监控已停止")
+
+    async def _check_connection_status(self) -> None:
+        """根据就绪状态与延迟判断连接是否健康，必要时恢复标志、执行主动健康检查或触发重连。"""
+        client = self.client
+        if client is None:
+            return
+
+        if client.is_closed():
+            if self.is_connected:
+                self.is_connected = False
+            return
+
+        try:
+            is_ready, latency = await asyncio.wait_for(
+                self._quick_check_ready(), timeout=3.0
+            )
+
+            latency_valid = (
+                latency is not None
+                and latency != float("inf")
+                and latency == latency  # NaN check
+                and latency >= 0
+            )
+
+            if is_ready and latency_valid and latency is not None and latency < 10.0:
+                if not self.is_connected:
+                    self._logger.info("Discord 连接已恢复")
+                    self.is_connected = True
+                    self._register_reaction_events()
+                    if self._on_connected_callback:
+                        try:
+                            await self._on_connected_callback()
+                        except Exception:
+                            pass
+
+                current_time = get_time()
+                if current_time - self._last_health_check >= self._health_check_interval:
+                    health_ok = await self._active_health_check()
+                    self._last_health_check = current_time
+
+                    if not health_ok:
+                        self._health_check_failures += 1
+                        self._logger.warning(
+                            f"主动健康检查失败 ({self._health_check_failures}/3)"
+                        )
+                        if self._health_check_failures >= 3:
+                            self._logger.error("检测到连接坏死，触发重连")
+                            self._health_check_failures = 0
+                            self.is_connected = False
+                            await self.force_reconnect()
+                    else:
+                        self._health_check_failures = 0
+
+            elif is_ready and (not latency_valid or (latency is not None and latency >= 10.0)):
+                self._logger.warning(f"Discord 延迟异常: {latency}，等待自动恢复")
+                self.is_connected = False
+
+            else:
+                if self.is_connected:
+                    self.is_connected = False
+
+        except asyncio.TimeoutError:
+            self._logger.warning("连接状态检查超时")
+            self.is_connected = False
+        except Exception as exc:
+            self._logger.error(f"检查连接状态异常: {exc}")
+            self.is_connected = False
+
+    async def _quick_check_ready(self) -> tuple[bool, Optional[float]]:
+        """快速读取客户端是否就绪及当前 Gateway 延迟（毫秒级心跳延迟）。
+
         Returns:
-            discord.abc.Messageable | None: 频道对象，获取失败时返回 None
+            (是否就绪, 延迟秒数)；客户端不可用时返回 (False, None)。
         """
-        if not self.client:
-            return None
-        return self.client.get_channel(channel_id)
+        try:
+            client = self.client
+            if client is None:
+                return False, None
+            return client.is_ready(), client.latency
+        except Exception:
+            return False, None
 
-    async def get_user(self, user_id: int) -> discord.User | None:
-        """获取用户对象
-        
-        Args:
-            user_id: 用户 ID
-            
+    async def _active_health_check(self) -> bool:
+        """通过 `fetch_user` 验证当前登录用户是否仍可被 API 正常解析。
+
         Returns:
-            discord.User | None: 用户对象，获取失败时返回 None
+            检查通过为 True，超时或 HTTP/未知错误为 False。
         """
-        if not self.client:
-            return None
-        return self.client.get_user(user_id)
-
-
-# 全局客户端实例（延迟初始化，由插件调用 get_discord_client() 获取）
-_discord_client_instance: Optional[DiscordClientManager] = None
-
-
-def get_discord_client() -> DiscordClientManager:
-    """获取 Discord 客户端单例（延迟初始化）
-    
-    Returns:
-        DiscordClientManager: Discord 客户端管理器实例
-    """
-    global _discord_client_instance
-    if _discord_client_instance is None:
-        logger.info("正在创建 Discord 客户端实例...")
-        _discord_client_instance = DiscordClientManager()
-    return _discord_client_instance
-
-
-# 为了向后兼容，保留 discord_client 变量名（但改为属性访问）
-class _DiscordClientProxy:
-    """Discord 客户端代理，用于延迟初始化"""
-    
-    def __getattr__(self, name):
-        return getattr(get_discord_client(), name)
-    
-    def __setattr__(self, name, value):
-        setattr(get_discord_client(), name, value)
-
-
-discord_client = _DiscordClientProxy()
+        try:
+            if self.client and self.client.user:
+                user = await asyncio.wait_for(
+                    self.client.fetch_user(self.client.user.id), timeout=30.0
+                )
+                return user is not None
+            return False
+        except (asyncio.TimeoutError, discord.HTTPException, discord.NotFound):
+            return False
+        except Exception:
+            return False

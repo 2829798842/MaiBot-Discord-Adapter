@@ -1,8 +1,7 @@
 discord.py[voice]>=2.3.0
-discord-ext-voice-recv>=0.4.0
+discord-ext-voice-recv>=0.4.1a139
 maim_message
 loguru>=0.7.0
 tomlkit
 aiofiles
 aiohttp>=3.9.0
-azure-cognitiveservices-speech>=1.38.0
