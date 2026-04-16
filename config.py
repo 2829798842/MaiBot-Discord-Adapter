@@ -254,6 +254,39 @@ class DiscordChatConfig(PluginConfigBase):
             "order": 10,
         },
     )
+    show_typing_indicator: bool = Field(
+        default=True,
+        description="收到可处理消息后，是否先显示 Discord 的“正在输入”状态。",
+        json_schema_extra={
+            "hint": "开启后，适配器会在消息进入处理链路后先显示 typing 状态，直到发出首条回复或内部超时结束。",
+            "label": "显示正在输入",
+            "order": 11,
+        },
+    )
+    typing_indicator_delay_ms: int = Field(
+        default=0,
+        description="显示“正在输入”前的延迟时间（毫秒）。",
+        json_schema_extra={
+            "hint": "避免极快回复也闪一下 typing；只有处理时间超过这个阈值时才会真正显示。",
+            "label": "输入提示延迟(ms)",
+            "order": 12,
+            "step": 100,
+            "depends_on": "chat.show_typing_indicator",
+            "depends_value": True,
+        },
+    )
+    typing_indicator_timeout_sec: int = Field(
+        default=0,
+        description="“正在输入”状态的最长保持时间（秒），设为 0 表示直到回复发出前都不主动超时。",
+        json_schema_extra={
+            "hint": "建议设得比常见 LLM 请求耗时更长；设为 0 时仅在成功发送、失败或断线时结束。",
+            "label": "输入提示超时(秒)",
+            "order": 13,
+            "step": 1,
+            "depends_on": "chat.show_typing_indicator",
+            "depends_value": True,
+        },
+    )
 
     @field_validator("guild_list_type", "channel_list_type", "thread_list_type", "user_list_type", mode="before")
     @classmethod
@@ -262,6 +295,15 @@ class DiscordChatConfig(PluginConfigBase):
         if normalized in ("whitelist", "blacklist"):
             return normalized  # type: ignore[return-value]
         return DEFAULT_CHAT_LIST_TYPE  # type: ignore[return-value]
+
+    @field_validator("typing_indicator_delay_ms", "typing_indicator_timeout_sec", mode="before")
+    @classmethod
+    def _normalize_non_negative_int(cls, value: Any) -> int:
+        if isinstance(value, int) and value >= 0:
+            return value
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+        return 0
 
     @field_validator("guild_list", "channel_list", "thread_list", "user_list", mode="before")
     @classmethod

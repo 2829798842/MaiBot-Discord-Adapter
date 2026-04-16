@@ -736,6 +736,14 @@ class DiscordAdapterPlugin(MaiBotPlugin):
             isinstance(additional_config, dict)
             and additional_config.get("discord_voice_output")
         )
+        source_channel_id: Optional[int] = None
+        if isinstance(additional_config, dict):
+            raw_source_channel_id = additional_config.get("platform_io_target_channel_id")
+            try:
+                if raw_source_channel_id not in (None, ""):
+                    source_channel_id = int(str(raw_source_channel_id).strip())
+            except (TypeError, ValueError):
+                source_channel_id = None
 
         target_channel = await self._thread_routing.resolve_target_channel(message)
         if target_channel is None:
@@ -744,6 +752,11 @@ class DiscordAdapterPlugin(MaiBotPlugin):
         target_channel_id = getattr(target_channel, "id", None)
         target_channel_name = getattr(target_channel, "name", "unknown")
         target_channel_type = type(target_channel).__name__
+        if self._client_manager is not None:
+            if isinstance(source_channel_id, int):
+                self._client_manager.stop_typing_indicator(source_channel_id)
+            if isinstance(target_channel_id, int) and target_channel_id != source_channel_id:
+                self._client_manager.stop_typing_indicator(target_channel_id)
         self.ctx.logger.debug(
             "Discord outbound target resolved "
             f"[channel_id={target_channel_id}, channel={target_channel_name}, "
@@ -929,6 +942,10 @@ class DiscordAdapterPlugin(MaiBotPlugin):
             return {"success": False, "error": "缺少必要参数 (message_id, channel_id, emoji)"}
 
         client = self._client_manager.client
+        try:
+            self._client_manager.stop_typing_indicator(int(channel_id))
+        except (TypeError, ValueError):
+            pass
         try:
             channel = client.get_channel(int(channel_id))
             if not channel:
@@ -1198,6 +1215,9 @@ class DiscordAdapterPlugin(MaiBotPlugin):
             filter_config=settings.filters,
             connection_check_interval=settings.connection.connection_check_interval,
             retry_delay=settings.connection.retry_delay,
+            typing_indicator_enabled=settings.chat.show_typing_indicator,
+            typing_indicator_delay_ms=settings.chat.typing_indicator_delay_ms,
+            typing_indicator_timeout_sec=settings.chat.typing_indicator_timeout_sec,
         )
 
         self._voice_manager = self._build_voice_manager(settings)
