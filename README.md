@@ -1,7 +1,23 @@
+<div align="center">
+
 # MaiBot Discord Adapter
 
-`maibot-discord-adapter` 是基于 MaiBot Plugin SDK 的 Discord 平台适配器。
-它负责把 Discord 与 MaiBot Host 之间的消息、路由、回执、线程上下文、Reaction 和语音能力接起来。
+<p>
+  <a href="https://discord.gg/KArcrcdWVt">
+    <img src="https://img.shields.io/badge/Discord-Maiwithu-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License">
+  </a>
+</p>
+
+MaiBot 的 Discord 平台适配器插件，让你的 MaiBot 能够在 Discord 上运行。
+
+> [MaiBot 原仓库](https://github.com/Mai-with-u/MaiBot)
+
+</div>
+
+---
 
 ## 当前能力
 
@@ -27,6 +43,8 @@
   - 子区上下文路由
   - Discord 平台消息 ID 回执回写
 
+---
+
 ## 快速开始
 
 1. 将插件放到 `MaiBot/plugins/maibot-discord-adapter`
@@ -36,28 +54,11 @@
 5. 如果要启用语音，同时打开 `voice.enabled` 和 `connection.intent_voice_states`
 6. 按场景填写 `voice.fixed_channel_id` 或 `voice.auto_channel_list`
 
-## 配置结构
+详细配置见：
 
-当前配置模型和 WebUI 表单以 [`config.py`](./config.py) 为准，主要分为：
+- [安装配置指南](./docs/setup_guide.md)
 
-- `plugin`
-  - 插件开关与配置版本
-- `connection`
-  - Bot Token、Discord intents、重试和连接检查
-- `chat`
-  - guild / channel / thread / user 黑白名单
-  - 子区是否允许互动
-  - 子区是否继承父频道权限与记忆
-- `platform`
-  - 平台标识，默认 `discord`
-- `filters`
-  - 是否忽略自身消息、忽略其他 bot 消息
-- `voice`
-  - 语音模式、频道列表、VAD、是否在语音频道同步发文字
-- `siliconflow_tts` / `gptsovits_tts` / `minimax_tts`
-  - 当前支持的 TTS 提供方配置
-- `siliconflow_stt` / `aliyun_stt` / `tencent_stt`
-  - 当前支持的 STT 提供方配置
+---
 
 ## 当前语音提供方
 
@@ -80,35 +81,28 @@ STT:
 - `connection.intent_voice_states = true`
 - Bot 对目标语音频道拥有 `View Channel`、`Connect`、`Speak` 权限
 
-详细配置见：
-
-- [安装配置指南](./docs/setup_guide.md)
 - [语音配置指南](./docs/voice_config_guide.md)
+
+---
+
+## Todo List
+
+- [ ] 增添commands统一api接口
+- [ ] 由语音聊天推广到视频识别->直播?
+- [ ] 欢迎提[issues](https://github.com/litroenade/MaiBot-Discord-Adapter/issues)进行补充
+
+---
 
 ## 排障建议
 
-如果出现“收得到消息但发不出去”或 “DM 失败”等问题，优先检查：
+由于国内Discord平台被墙，如果长时间无法连接Discord平台请尝试开启tun模式(同时推荐代理内核使用singbox)
 
-- `connection.token` 是否有效
-- `intent_message_content` 是否启用
-- `intent_dm_messages` 是否启用
-- Bot 是否已经被邀请进目标服务器
-- 目标频道权限是否允许发送消息
-- 插件是否已经成功加载并处于启用状态
+---
+## 致谢
 
-如果出现“无法解析目标频道”，优先关注：
+- [@UnCLAS-Prommer](https://github.com/UnCLAS-Prommer) - MaiBot-napcat-adapter 代码参考
+---
 
-- 这条消息是 Guild 还是 DM
-- `platform_io_target_group_id` / `platform_io_target_user_id` 是否正确继承
-- 插件日志里的 route metadata、目标 ID、频道类型与权限检查结果
+## 开源协议
 
-如果出现“无法进入语音频道”，优先关注：
-
-- `voice.enabled` 是否已经开启
-- `fixed_channel_id` 填的是不是真正的语音频道 ID，而不是分类 ID
-- `intent_voice_states` 是否开启
-- Bot 在该频道的 `Connect` / `Speak` 权限是否完整
-
-## 许可证
-
-[GPL-3.0](LICENSE)
+本项目采用 [GPL-v3.0](LICENSE) 协议开源
