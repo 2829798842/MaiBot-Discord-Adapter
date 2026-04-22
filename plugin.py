@@ -37,6 +37,8 @@ class DiscordAdapterPlugin(MaiBotPlugin):
     config_model: ClassVar[type[PluginConfigBase] | None] = DiscordPluginSettings
     _GSV_SCHEMA_AUTO_CHOICE: ClassVar[str] = "[auto]"
     _GSV_SCHEMA_CACHE_TTL_SECONDS: ClassVar[float] = 30.0
+    _GSV_SCHEMA_FAILURE_CACHE_TTL_SECONDS: ClassVar[float] = 10.0
+    _GSV_SCHEMA_FETCH_TIMEOUT_SECONDS: ClassVar[float] = 0.5
 
     def __init__(self) -> None:
         """初始化插件实例，各子组件在连接建立前保持为未绑定状态。"""
@@ -51,7 +53,7 @@ class DiscordAdapterPlugin(MaiBotPlugin):
         self._client_task: Optional[asyncio.Task[None]] = None
         self._gsv_template_catalog_cache: Dict[
             str,
-            tuple[float, Dict[str, Dict[str, List[str]]]],
+            tuple[float, Optional[Dict[str, Dict[str, List[str]]]], str],
         ] = {}
 
     async def on_load(self) -> None:
@@ -104,6 +106,7 @@ class DiscordAdapterPlugin(MaiBotPlugin):
         normalized_catalog_values = self._normalize_gptsovits_catalog_values(
             voice_config=voice_config,
             gptsovits_config=gptsovits_config,
+            allow_fetch=False,
         )
         return (
             normalized_config,
@@ -263,6 +266,7 @@ class DiscordAdapterPlugin(MaiBotPlugin):
         *,
         voice_config: Dict[str, Any],
         gptsovits_config: Dict[str, Any],
+        allow_fetch: bool,
     ) -> bool:
         if str(voice_config.get("tts_provider") or "").strip() != "gptsovits":
             return False
@@ -271,7 +275,11 @@ class DiscordAdapterPlugin(MaiBotPlugin):
         version = str(gptsovits_config.get("version") or "v4").strip() or "v4"
         changed = False
 
-        template_catalog, _ = self._fetch_gptsovits_template_catalog(api_base, version)
+        template_catalog, _ = self._fetch_gptsovits_template_catalog(
+            api_base,
+            version,
+            allow_fetch=allow_fetch,
+        )
         if not template_catalog:
             return changed
 
@@ -316,6 +324,8 @@ class DiscordAdapterPlugin(MaiBotPlugin):
         self,
         api_base: str,
         version: str,
+        *,
+        allow_fetch: bool = True,
     ) -> tuple[Optional[Dict[str, Dict[str, List[str]]]], str]:
         normalized_api_base = str(api_base or "").strip().rstrip("/")
         normalized_version = str(version or "v4").strip() or "v4"
@@ -325,24 +335,42 @@ class DiscordAdapterPlugin(MaiBotPlugin):
         cache_key = f"{normalized_api_base}|{normalized_version}"
         cached = self._gsv_template_catalog_cache.get(cache_key)
         now = time.monotonic()
-        if cached and now - cached[0] <= self._GSV_SCHEMA_CACHE_TTL_SECONDS:
-            return cached[1], ""
+        if cached:
+            cached_at, cached_catalog, cached_error = cached
+            ttl = (
+                self._GSV_SCHEMA_CACHE_TTL_SECONDS
+                if cached_catalog
+                else self._GSV_SCHEMA_FAILURE_CACHE_TTL_SECONDS
+            )
+            if now - cached_at <= ttl:
+                return cached_catalog, cached_error
+
+        if not allow_fetch:
+            return None, "catalog unavailable without network fetch"
 
         request_url = f"{normalized_api_base}/models/{quote(normalized_version, safe='')}"
         try:
             request = Request(request_url, headers={"Accept": "application/json"})
-            with urlopen(request, timeout=3.0) as response:
+            with urlopen(request, timeout=self._GSV_SCHEMA_FETCH_TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8", errors="ignore"))
         except HTTPError as exc:
-            return None, f"HTTP {exc.code}"
+            error = f"HTTP {exc.code}"
+            self._gsv_template_catalog_cache[cache_key] = (now, None, error)
+            return None, error
         except URLError as exc:
-            return None, str(exc.reason or exc)
+            error = str(exc.reason or exc)
+            self._gsv_template_catalog_cache[cache_key] = (now, None, error)
+            return None, error
         except Exception as exc:
-            return None, str(exc)
+            error = str(exc)
+            self._gsv_template_catalog_cache[cache_key] = (now, None, error)
+            return None, error
 
         models = payload.get("models")
         if not isinstance(models, dict):
-            return None, "response missing models"
+            error = "response missing models"
+            self._gsv_template_catalog_cache[cache_key] = (now, None, error)
+            return None, error
 
         catalog: Dict[str, Dict[str, List[str]]] = {}
         for raw_model_name, raw_languages in models.items():
@@ -365,9 +393,11 @@ class DiscordAdapterPlugin(MaiBotPlugin):
                 catalog[model_name] = normalized_languages
 
         if not catalog:
-            return None, "empty template catalog"
+            error = "empty template catalog"
+            self._gsv_template_catalog_cache[cache_key] = (now, None, error)
+            return None, error
 
-        self._gsv_template_catalog_cache[cache_key] = (now, catalog)
+        self._gsv_template_catalog_cache[cache_key] = (now, catalog, "")
         self._get_logger().debug(
             "Loaded GPT-SoVITS template catalog for schema rendering "
             f"[api={normalized_api_base}, version={normalized_version}, models={len(catalog)}]"
