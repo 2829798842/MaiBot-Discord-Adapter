@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 import discord
 from maim_message import BaseMessageInfo, MessageBase, Seg
 
-from maibot_sdk import MaiBotPlugin, MessageGateway, PluginConfigBase
+from maibot_sdk import API, HookHandler, MaiBotPlugin, MessageGateway, PluginConfigBase
 
 from maim_message import FormatInfo, GroupInfo, UserInfo
 
@@ -511,6 +511,156 @@ class DiscordAdapterPlugin(MaiBotPlugin):
             return base_hint
         return f"{base_hint} {extra}"
 
+    @HookHandler(
+        "chat.receive.after_process",
+        name="discord_typing_target_recorder",
+        mode="blocking",
+        order="late",
+        timeout_ms=1000,
+    )
+    async def remember_discord_typing_target(
+        self,
+        message: Dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """记录 Discord 入站消息对应的 typing 目标，并启动当前会话 typing。"""
+        del kwargs
+        if self._client_manager is None or not isinstance(message, dict):
+            return {"action": "continue"}
+
+        settings = self._load_settings()
+        if str(message.get("platform") or "").strip() != settings.platform.platform_name:
+            return {"action": "continue"}
+
+        session_id = str(message.get("session_id") or "").strip()
+        channel_id = self._extract_discord_typing_channel_id(message)
+        if session_id and isinstance(channel_id, int):
+            self._client_manager.remember_typing_target(session_id, channel_id)
+            await self._client_manager.start_typing_for_session(session_id)
+        return {"action": "continue"}
+
+    @HookHandler(
+        "send_service.before_send",
+        name="discord_typing_before_send",
+        mode="blocking",
+        order="early",
+        timeout_ms=1000,
+    )
+    async def stop_discord_typing_before_send(
+        self,
+        message: Dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """发送前先停止 Discord typing，避免后台刷新延续到回复之后。"""
+        del kwargs
+        self._stop_discord_typing_for_hook_message(message)
+        return {"action": "continue"}
+
+    @HookHandler(
+        "maisaka.replyer.after_response",
+        name="discord_typing_after_replyer_response",
+        mode="observe",
+        order="late",
+        timeout_ms=1000,
+    )
+    async def stop_discord_typing_after_replyer_response(
+        self,
+        session_id: str = "",
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """replyer 产出可见回复文本后结束 Discord typing。"""
+        del kwargs
+        if self._client_manager is not None:
+            self._client_manager.stop_typing_for_session(session_id)
+        return {"action": "continue"}
+
+    @HookHandler(
+        "send_service.after_send",
+        name="discord_typing_after_send",
+        mode="observe",
+        order="late",
+        timeout_ms=1000,
+    )
+    async def stop_discord_typing_after_send(
+        self,
+        message: Dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """发送流程结束后按出站消息再收束一次 Discord typing。"""
+        del kwargs
+        self._stop_discord_typing_for_hook_message(message)
+        return {"action": "continue"}
+
+    def _stop_discord_typing_for_hook_message(self, message: Mapping[str, Any] | None) -> None:
+        if self._client_manager is None or not isinstance(message, Mapping):
+            return
+
+        session_id = str(message.get("session_id") or "").strip()
+        if session_id:
+            self._client_manager.stop_typing_for_session(session_id)
+
+        channel_id = self._extract_discord_typing_channel_id(message)
+        if isinstance(channel_id, int):
+            self._client_manager.stop_typing_indicator(channel_id)
+
+    @classmethod
+    def _extract_discord_typing_channel_id(cls, message: Mapping[str, Any]) -> Optional[int]:
+        message_info = message.get("message_info")
+        if not isinstance(message_info, Mapping):
+            return None
+
+        raw_thread_id = cls._extract_thread_context_channel_id(message.get("raw_message"))
+        if raw_thread_id is not None:
+            return raw_thread_id
+
+        additional_config = message_info.get("additional_config")
+        if isinstance(additional_config, Mapping):
+            channel_id = cls._normalize_int_id(additional_config.get("platform_io_target_channel_id"))
+            if channel_id is not None:
+                return channel_id
+            channel_id = cls._normalize_int_id(additional_config.get("platform_io_target_group_id"))
+            if channel_id is not None:
+                return channel_id
+
+        group_info = message_info.get("group_info")
+        if isinstance(group_info, Mapping):
+            return cls._normalize_int_id(group_info.get("group_id"))
+        return None
+
+    @classmethod
+    def _extract_thread_context_channel_id(cls, raw_message: Any) -> Optional[int]:
+        for segment in cls._iter_message_segments(raw_message):
+            if not isinstance(segment, Mapping):
+                continue
+            if segment.get("type") != "thread_context":
+                continue
+            data = segment.get("data")
+            if isinstance(data, Mapping):
+                channel_id = cls._normalize_int_id(data.get("original_thread_id"))
+                if channel_id is not None:
+                    return channel_id
+        return None
+
+    @classmethod
+    def _iter_message_segments(cls, value: Any) -> Sequence[Mapping[str, Any]]:
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, Mapping)]
+        if isinstance(value, Mapping):
+            if value.get("type") == "seglist" and isinstance(value.get("data"), list):
+                return [item for item in value["data"] if isinstance(item, Mapping)]
+            return [value]
+        return []
+
+    @staticmethod
+    def _normalize_int_id(value: Any) -> Optional[int]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except (TypeError, ValueError):
+            return None
+
     @MessageGateway(
         name=DISCORD_GATEWAY_NAME,
         route_type="duplex",
@@ -748,6 +898,15 @@ class DiscordAdapterPlugin(MaiBotPlugin):
         normalized = str(value).strip()
         return normalized or None
 
+    def _stop_typing_for_outbound_channels(self, *channel_ids: Optional[int]) -> None:
+        if self._client_manager is None:
+            return
+        seen: set[int] = set()
+        for channel_id in channel_ids:
+            if isinstance(channel_id, int) and channel_id not in seen:
+                self._client_manager.stop_typing_indicator(channel_id)
+                seen.add(channel_id)
+
 
     async def _handle_outbound_message(self, message: MessageBase) -> Dict[str, Any]:
         """将普通文本/媒体出站消息解析目标频道并发送（含语音频道 TTS 分支）。
@@ -777,16 +936,13 @@ class DiscordAdapterPlugin(MaiBotPlugin):
 
         target_channel = await self._thread_routing.resolve_target_channel(message)
         if target_channel is None:
+            self._stop_typing_for_outbound_channels(source_channel_id)
             return {"success": False, "error": "无法解析目标频道"}
 
         target_channel_id = getattr(target_channel, "id", None)
         target_channel_name = getattr(target_channel, "name", "unknown")
         target_channel_type = type(target_channel).__name__
-        if self._client_manager is not None:
-            if isinstance(source_channel_id, int):
-                self._client_manager.stop_typing_indicator(source_channel_id)
-            if isinstance(target_channel_id, int) and target_channel_id != source_channel_id:
-                self._client_manager.stop_typing_indicator(target_channel_id)
+        self._stop_typing_for_outbound_channels(source_channel_id, target_channel_id)
         self.ctx.logger.debug(
             "Discord outbound target resolved "
             f"[channel_id={target_channel_id}, channel={target_channel_name}, "
@@ -805,6 +961,7 @@ class DiscordAdapterPlugin(MaiBotPlugin):
                     channel_id=target_channel.id,
                     text_channel=target_channel,
                 )
+                self._stop_typing_for_outbound_channels(source_channel_id, target_channel_id)
                 if voice_result.get("success"):
                     return voice_result
 
@@ -833,6 +990,7 @@ class DiscordAdapterPlugin(MaiBotPlugin):
         reference = await self._thread_routing.get_reply_reference(message, target_channel)
 
         if not content and not files:
+            self._stop_typing_for_outbound_channels(source_channel_id, target_channel_id)
             return {"success": False, "error": "消息内容为空且无附件"}
 
         try:
@@ -844,6 +1002,8 @@ class DiscordAdapterPlugin(MaiBotPlugin):
             return result
         except Exception as exc:
             return {"success": False, "error": str(exc)}
+        finally:
+            self._stop_typing_for_outbound_channels(source_channel_id, target_channel_id)
 
     async def _handle_voice_outbound(
         self,
@@ -997,6 +1157,44 @@ class DiscordAdapterPlugin(MaiBotPlugin):
         except (ValueError, TypeError) as exc:
             return {"success": False, "error": f"参数格式错误: {exc}"}
 
+
+    @API("adapter.discord.channel.send_message", description="发送 Discord 频道消息", version="1", public=True)
+    async def send_channel_message(self, channel_id: str, text: str) -> Dict[str, Any]:
+        """给 room 这类跨会话转发提供稳定的频道直发入口。"""
+        if self._client_manager is None or self._client_manager.client is None:
+            return {"success": False, "error": "Discord 客户端未就绪"}
+
+        normalized_channel_id = str(channel_id or "").strip()
+        content = str(text or "")
+        if not normalized_channel_id:
+            return {"success": False, "error": "缺少必要参数 channel_id"}
+        if not content.strip():
+            return {"success": False, "error": "消息内容为空"}
+
+        try:
+            numeric_channel_id = int(normalized_channel_id)
+        except (TypeError, ValueError) as exc:
+            return {"success": False, "error": f"参数格式错误: {exc}"}
+
+        client = self._client_manager.client
+        try:
+            channel = client.get_channel(numeric_channel_id)
+            if not channel:
+                channel = await client.fetch_channel(numeric_channel_id)
+            if not hasattr(channel, "send"):
+                return {"success": False, "error": "目标频道不可发送消息"}
+
+            # 这里复用正常出站的长度处理，避免 room 直发绕过 Discord 2000 字限制。
+            sent_message = await self._send_with_length_check(channel, content, (), None)
+            result: Dict[str, Any] = {"success": True}
+            if sent_message is not None:
+                message_id = str(getattr(sent_message, "id", "") or "")
+                if message_id:
+                    result["external_message_id"] = message_id
+                    result["message_id"] = message_id
+            return result
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+            return {"success": False, "error": str(exc)}
 
     MAX_MESSAGE_LENGTH: int = 2000
 

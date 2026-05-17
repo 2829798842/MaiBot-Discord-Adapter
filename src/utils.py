@@ -149,7 +149,7 @@ class AsyncTaskManager:
         """任务完成回调"""
         if task in self.tasks:
             self.tasks.remove(task)
-
+          
     async def cancel_all(self):
         """取消所有任务"""
         for task in self.tasks[:]:  # 创建副本以避免修改时迭代

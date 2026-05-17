@@ -13,6 +13,8 @@ import discord
 from ..send_handler.thread_send_handler import ThreadRoutingManager
 from .message_handler import DiscordMessageHandler
 
+TYPING_INDICATOR_REFRESH_SECONDS = 5.0
+
 
 class DiscordClientManager:
     """Discord 客户端管理器。
@@ -37,7 +39,7 @@ class DiscordClientManager:
         retry_delay: int = 5,
         typing_indicator_enabled: bool = False,
         typing_indicator_delay_ms: int = 1200,
-        typing_indicator_timeout_sec: int = 120,
+        typing_indicator_timeout_sec: int = 5,
     ) -> None:
         """初始化管理器状态并创建 Discord 客户端与事件绑定。
 
@@ -84,6 +86,7 @@ class DiscordClientManager:
         self._health_check_failures: int = 0
         self._typing_indicator_tasks: Dict[int, asyncio.Task[None]] = {}
         self._typing_indicator_stop_events: Dict[int, asyncio.Event] = {}
+        self._typing_targets_by_session_id: Dict[str, int] = {}
 
         self._on_connected_callback: Optional[Any] = None
         self._on_disconnected_callback: Optional[Any] = None
@@ -193,7 +196,6 @@ class DiscordClientManager:
         Args:
             message: Discord 推送的 `Message` 对象。
         """
-        typing_channel_id: Optional[int] = None
         try:
             bot_user = getattr(self.client, "user", None)
             if bot_user and message.author.id == bot_user.id:
@@ -255,7 +257,6 @@ class DiscordClientManager:
             if message_dict is None:
                 return
 
-            typing_channel_id = self.start_typing_indicator(message.channel)
             await self._gateway_capability.route_message(
                 self._gateway_name,
                 message_dict,
@@ -280,10 +281,44 @@ class DiscordClientManager:
                     self._thread_routing_manager.clear_thread_context(str(message.channel.id))
 
         except Exception as exc:
-            if typing_channel_id is not None:
-                self.stop_typing_indicator(typing_channel_id)
             self._logger.error(f"处理 Discord 消息时发生错误: {exc}")
             self._logger.debug(traceback.format_exc())
+
+    def remember_typing_target(self, session_id: str, channel_id: int) -> None:
+        """记录 MaiBot session 对应的 Discord typing 目标。"""
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id or not isinstance(channel_id, int):
+            return
+        self._typing_targets_by_session_id[normalized_session_id] = channel_id
+
+    async def start_typing_for_session(self, session_id: str) -> Optional[int]:
+        """在 Maisaka 真正开始请求模型时，为对应 Discord 会话启动 typing。"""
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id or self.client is None:
+            return None
+
+        channel_id = self._typing_targets_by_session_id.get(normalized_session_id)
+        if not isinstance(channel_id, int):
+            return None
+
+        channel = self.client.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.client.fetch_channel(channel_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+                self._logger.debug(
+                    "Discord typing target fetch failed "
+                    f"[session_id={normalized_session_id}, channel_id={channel_id}, error={exc}]"
+                )
+                return None
+        return self.start_typing_indicator(channel)
+
+    def stop_typing_for_session(self, session_id: str) -> None:
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            return
+        channel_id = self._typing_targets_by_session_id.pop(normalized_session_id, None)
+        self.stop_typing_indicator(channel_id)
 
     def start_typing_indicator(self, channel: discord.abc.Messageable) -> Optional[int]:
         """在指定消息目标上启动短时 typing 指示。"""
@@ -297,7 +332,9 @@ class DiscordClientManager:
 
         existing_task = self._typing_indicator_tasks.get(channel_id)
         if existing_task is not None and not existing_task.done():
-            return channel_id
+            existing_stop_event = self._typing_indicator_stop_events.get(channel_id)
+            if existing_stop_event is None or not existing_stop_event.is_set():
+                return channel_id
 
         stop_event = asyncio.Event()
         task = asyncio.create_task(
@@ -313,24 +350,24 @@ class DiscordClientManager:
         if not isinstance(channel_id, int):
             return
 
-        stop_event = self._typing_indicator_stop_events.get(channel_id)
+        stop_event = self._typing_indicator_stop_events.pop(channel_id, None)
         if stop_event is not None:
             stop_event.set()
 
-        task = self._typing_indicator_tasks.get(channel_id)
-        if task is not None and task.done():
-            self._typing_indicator_tasks.pop(channel_id, None)
-            self._typing_indicator_stop_events.pop(channel_id, None)
+        task = self._typing_indicator_tasks.pop(channel_id, None)
+        if task is not None and not task.done():
+            task.cancel()
 
     def _stop_all_typing_indicators(self) -> None:
         """停止当前客户端维护的全部 typing 指示任务。"""
         for stop_event in list(self._typing_indicator_stop_events.values()):
             stop_event.set()
 
-        for channel_id, task in list(self._typing_indicator_tasks.items()):
-            if task.done():
-                self._typing_indicator_tasks.pop(channel_id, None)
-                self._typing_indicator_stop_events.pop(channel_id, None)
+        for task in list(self._typing_indicator_tasks.values()):
+            if not task.done():
+                task.cancel()
+        self._typing_indicator_tasks.clear()
+        self._typing_indicator_stop_events.clear()
 
     async def _typing_indicator_worker(
         self,
@@ -357,20 +394,27 @@ class DiscordClientManager:
                 "Discord typing indicator activated "
                 f"[channel_id={channel_id}, timeout_sec={self._typing_indicator_timeout_seconds}]"
             )
-            async with channel.typing():
+            started_at = asyncio.get_running_loop().time()
+            while not stop_event.is_set():
                 if self._typing_indicator_timeout_seconds > 0:
-                    try:
-                        await asyncio.wait_for(
-                            stop_event.wait(),
-                            timeout=self._typing_indicator_timeout_seconds,
-                        )
-                    except asyncio.TimeoutError:
+                    elapsed = asyncio.get_running_loop().time() - started_at
+                    remaining_timeout = self._typing_indicator_timeout_seconds - elapsed
+                    if remaining_timeout <= 0:
                         self._logger.debug(
                             "Discord typing indicator timed out before any outbound reply "
                             f"[channel_id={channel_id}]"
                         )
+                        return
                 else:
-                    await stop_event.wait()
+                    remaining_timeout = TYPING_INDICATOR_REFRESH_SECONDS
+
+                await channel.typing()
+
+                wait_timeout = min(TYPING_INDICATOR_REFRESH_SECONDS, remaining_timeout)
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=wait_timeout)
+                except asyncio.TimeoutError:
+                    continue
         except asyncio.CancelledError:
             raise
         except (discord.Forbidden, discord.HTTPException) as exc:

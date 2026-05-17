@@ -256,9 +256,9 @@ class DiscordChatConfig(PluginConfigBase):
     )
     show_typing_indicator: bool = Field(
         default=True,
-        description="收到可处理消息后，是否先显示 Discord 的“正在输入”状态。",
+        description="Maisaka 真正开始向模型发起规划请求前，是否显示 Discord 的“正在输入”状态。",
         json_schema_extra={
-            "hint": "开启后，适配器会在消息进入处理链路后先显示 typing 状态，直到发出首条回复或内部超时结束。",
+            "hint": "开启后，适配器会先记录 Discord 会话目标，只在 MaiBot 进入 Maisaka planner 请求前启动 typing，直到发出首条回复或内部超时结束。",
             "label": "显示正在输入",
             "order": 11,
         },
@@ -276,7 +276,7 @@ class DiscordChatConfig(PluginConfigBase):
         },
     )
     typing_indicator_timeout_sec: int = Field(
-        default=0,
+        default=5,
         description="“正在输入”状态的最长保持时间（秒），设为 0 表示直到回复发出前都不主动超时。",
         json_schema_extra={
             "hint": "建议设得比常见 LLM 请求耗时更长；设为 0 时仅在成功发送、失败或断线时结束。",

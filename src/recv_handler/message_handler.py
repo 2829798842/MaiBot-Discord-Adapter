@@ -349,6 +349,7 @@ class DiscordMessageHandler:
 
             group_info = None
             additional_config: Dict[str, Any] = {}
+            additional_config["platform_io_target_channel_id"] = str(message.channel.id)
             thread_context_marker = False
             original_thread_id: Optional[str] = None
             thread_name: Optional[str] = None
@@ -358,12 +359,24 @@ class DiscordMessageHandler:
 
                 if is_thread:
                     thread_name = message.channel.name
+                    thread_id = str(message.channel.id)
+                    parent_channel_id = str(message.channel.parent.id)
                     parent_channel_name = (
                         message.channel.parent.name
                         if hasattr(message.channel.parent, "name")
                         else f"频道{message.channel.parent.id}"
                     )
                     inherit = getattr(self._chat_config, "inherit_channel_memory", True)
+                    additional_config.update(
+                        {
+                            "discord_is_thread": True,
+                            "discord_inherit_channel_memory": inherit,
+                            "thread_id": thread_id,
+                            "original_thread_id": thread_id,
+                            "parent_channel_id": parent_channel_id,
+                            "discord_thread_name": thread_name or "",
+                        }
+                    )
 
                     if inherit:
                         group_id = str(message.channel.parent.id)
@@ -375,9 +388,9 @@ class DiscordMessageHandler:
                             group_name=actual_context,
                         )
                         thread_context_marker = True
-                        original_thread_id = str(message.channel.id)
+                        original_thread_id = thread_id
                     else:
-                        group_id = str(message.channel.id)
+                        group_id = thread_id
                         group_name = f"{thread_name} [{parent_channel_name}] @ {message.guild.name}"
                         group_info = GroupInfo(
                             platform=self._platform_name,
